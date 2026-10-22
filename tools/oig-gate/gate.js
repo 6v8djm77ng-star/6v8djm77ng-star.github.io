@@ -161,6 +161,25 @@ function isAllowed(auth, config) {
   return true;
 }
 
+// Per-device app scoping. A device with no `apps` array reaches every listener
+// (backward compatible); one with `apps` reaches only the named listeners.
+function appAllowed(device, listenerName) {
+  if (!device) return false;
+  if (!Array.isArray(device.apps)) return true;
+  return device.apps.includes(listenerName);
+}
+
+// Parse a CLI apps argument: "all"/"*"/empty -> undefined (all apps),
+// otherwise a comma-separated list validated against the configured listeners.
+function parseApps(arg, config) {
+  if (arg == null || arg === '' || arg === 'all' || arg === '*') return undefined;
+  const names = new Set(config.listeners.map((l) => l.name));
+  const apps = arg.split(',').map((s) => s.trim()).filter(Boolean);
+  const bad = apps.filter((a) => !names.has(a));
+  if (bad.length) throw new Error('unknown app(s): ' + bad.join(', ') + '  (known: ' + [...names].join(', ') + ')');
+  return apps;
+}
+
 // ---------- WebAuthn (passkeys) ----------
 
 const challenges = new Map(); // challenge(b64u) -> { deviceId, type, exp }
@@ -313,6 +332,7 @@ async function handleGate(req, res, ctx, url) {
     }
     const deviceId = b64u(crypto.randomBytes(12));
     state.devices[deviceId] = { label: link.label, createdAt: new Date().toISOString(), enrolledAt: now(), ua: req.headers['user-agent'] || '' };
+    if (Array.isArray(link.apps)) state.devices[deviceId].apps = link.apps;
     link.usedAt = new Date().toISOString();
     link.deviceId = deviceId;
     saveState(state);
@@ -431,7 +451,12 @@ function startListener(listener, ctxBase) {
       const url = new URL(req.url, 'http://gate');
       if (url.pathname.startsWith('/__gate/')) return await handleGate(req, res, ctx, url);
       const auth = authOf(req, ctx);
-      if (isAllowed(auth, ctx.config)) return proxy(req, res, listener.target);
+      const allowedHere = appAllowed(auth.device, listener.name);
+      if (isAllowed(auth, ctx.config) && allowedHere) return proxy(req, res, listener.target);
+      if (auth.device && !allowedHere) {
+        log('denied_app', { app: listener.name, ip: clientIp(req), deviceId: auth.deviceId, label: auth.device.label });
+        return notFound(res);
+      }
       if (auth.device && auth.device.cred && req.method === 'GET' && String(req.headers.accept || '').includes('text/html')) {
         res.writeHead(302, { location: '/__gate/login', 'cache-control': 'no-store' });
         return res.end();
@@ -446,7 +471,8 @@ function startListener(listener, ctxBase) {
   });
   server.on('upgrade', (req, socket, head) => {
     const ctx = { ...ctxBase, config: loadConfig() };
-    if (!isAllowed(authOf(req, ctx), ctx.config)) {
+    const a = authOf(req, ctx);
+    if (!isAllowed(a, ctx.config) || !appAllowed(a.device, listener.name)) {
       log('denied_ws', { app: listener.name, ip: clientIp(req), path: req.url.slice(0, 200) });
       socket.end('HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n');
       return;
@@ -490,17 +516,32 @@ function cli(args) {
 
   if (cmd === 'link') {
     const label = args[1] || 'device';
+    let apps;
+    try { apps = parseApps(args[2], config); } catch (e) { return console.log(e.message); }
     const token = b64u(crypto.randomBytes(32));
-    state.links[b64u(sha256(token))] = { label, exp: now() + config.linkMinutes * 60000, createdAt: new Date().toISOString() };
+    const rec = { label, exp: now() + config.linkMinutes * 60000, createdAt: new Date().toISOString() };
+    if (apps) rec.apps = apps;
+    state.links[b64u(sha256(token))] = rec;
     saveState(state);
-    console.log(`One-time link for "${label}" (valid ${config.linkMinutes} min, single use):`);
+    console.log(`One-time link for "${label}" (valid ${config.linkMinutes} min, single use)${apps ? ', apps: ' + apps.join(',') : ', apps: all'}:`);
     return console.log(`${config.enrollBaseUrl}/__gate/enroll?t=${token}`);
+  }
+
+  if (cmd === 'apps') {
+    const id = args[1];
+    if (!id || args[2] == null) return console.log('usage: node gate.js apps <deviceId> <app1,app2|all>');
+    if (!state.devices[id]) return console.log('unknown device ' + id);
+    let apps;
+    try { apps = parseApps(args[2], config); } catch (e) { return console.log(e.message); }
+    if (apps) state.devices[id].apps = apps; else delete state.devices[id].apps;
+    saveState(state);
+    return console.log(`device ${id} apps = ${apps ? apps.join(',') : 'all'} (applies immediately)`);
   }
 
   if (cmd === 'list') {
     console.log(`mode: ${config.mode}`);
     for (const [id, d] of Object.entries(state.devices)) {
-      console.log(`${id}  ${d.revoked ? 'REVOKED' : 'active '}  passkey:${d.cred ? 'yes' : 'no '}  ${d.label}  enrolled:${d.createdAt}  lastLogin:${d.lastLogin || '-'}`);
+      console.log(`${id}  ${d.revoked ? 'REVOKED' : 'active '}  passkey:${d.cred ? 'yes' : 'no '}  apps:${Array.isArray(d.apps) ? d.apps.join('+') : 'all'}  ${d.label}  enrolled:${d.createdAt}  lastLogin:${d.lastLogin || '-'}`);
     }
     return;
   }
@@ -531,7 +572,7 @@ function cli(args) {
     return console.log('mode = ' + mode + ' (applies immediately)');
   }
 
-  console.log('usage: node gate.js [init|serve|link <label>|list|revoke <id|all>|mode link|passkey]');
+  console.log('usage: node gate.js [init|serve|link <label> [apps]|apps <id> <apps|all>|list|revoke <id|all>|mode link|passkey]');
 }
 
 if (require.main === module) cli(process.argv.slice(2));
