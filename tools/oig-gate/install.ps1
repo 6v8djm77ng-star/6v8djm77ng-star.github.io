@@ -13,7 +13,7 @@ $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 $Base     = 'https://raw.githubusercontent.com/6v8djm77ng-star/6v8djm77ng-star.github.io/claude/upbeat-cray-h52mmj/tools/oig-gate'
-$GateHash = '947B961DE996CEF90AB1B6B505FDBEBF4542BE707EA0659051174E6A50ED2DBF'
+$GateHash = 'FF634D7C5EB6CE1D72F77273C387C4FF8DE86CB580C460D04F37EA9653FCA26E'
 $Dir      = 'C:\apps\oig-gate'
 $Node     = 'C:\apps\runtime\node\node.exe'
 $Task     = 'OIG Gate'

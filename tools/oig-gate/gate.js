@@ -69,6 +69,25 @@ function clientIp(req) {
   return String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
 }
 
+// Trustworthy source IP for allow-list decisions. Tailscale Funnel appends the
+// real client IP as the last X-Forwarded-For hop, so a client-prepended value
+// cannot shift it; fall back to the socket peer when no header is present.
+function trustedIp(req) {
+  const xff = String(req.headers['x-forwarded-for'] || '').split(',').map((s) => s.trim()).filter(Boolean);
+  const ip = xff.length ? xff[xff.length - 1] : String(req.socket.remoteAddress || '');
+  return ip.replace(/^::ffff:/, '');
+}
+
+// A request matches a listener's publicPaths when its path equals or sits under
+// a configured prefix. Such a path skips the passkey gate but is served only to
+// the configured source IPs (empty allowIps = served to no one).
+function publicRoute(liveListener, pathname) {
+  for (const pp of liveListener.publicPaths || []) {
+    if (pp.path && (pathname === pp.path || pathname.startsWith(pp.path + '/'))) return pp;
+  }
+  return null;
+}
+
 // ---------- config / state / secret ----------
 
 function loadConfig() {
@@ -450,6 +469,15 @@ function startListener(listener, ctxBase) {
     try {
       const url = new URL(req.url, 'http://gate');
       if (url.pathname.startsWith('/__gate/')) return await handleGate(req, res, ctx, url);
+      // Machine webhooks: skip the passkey gate, serve only to allow-listed IPs.
+      const liveListener = (ctx.config.listeners || []).find((l) => l.name === listener.name) || listener;
+      const pub = publicRoute(liveListener, url.pathname);
+      if (pub) {
+        const ip = trustedIp(req);
+        if (Array.isArray(pub.allowIps) && pub.allowIps.includes(ip)) return proxy(req, res, listener.target);
+        log('denied_public', { app: listener.name, ip, path: url.pathname.slice(0, 200) });
+        return notFound(res);
+      }
       const auth = authOf(req, ctx);
       const allowedHere = appAllowed(auth.device, listener.name);
       if (isAllowed(auth, ctx.config) && allowedHere) return proxy(req, res, listener.target);
