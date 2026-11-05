@@ -32,9 +32,14 @@ if (-not $sender) { $sender = 'izik@oig.co.il' }
 $to     = Read-Host "Send test mail to [$sender]"
 if (-not $to) { $to = $sender }
 
-$env:GRAPH_TENANT_ID = $tenant
-$env:GRAPH_CLIENT_ID = $client
-$env:GRAPH_CLIENT_SECRET = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec))
+$plain = ([Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec))).Trim()
+# A Secret ID is a GUID; the secret Value is ~40 chars and usually contains '~'.
+if ($plain -match '^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$') { throw 'You entered the Secret ID (a GUID). Enter the secret VALUE instead.' }
+if ($plain.Length -lt 3) { throw 'The secret came in empty - paste with right-click, then press Enter.' }
+Write-Host ("secret entered: starts with '{0}', length {1} (a Value is usually 40 chars)" -f $plain.Substring(0,3), $plain.Length)
+$env:GRAPH_TENANT_ID = $tenant.Trim()
+$env:GRAPH_CLIENT_ID = $client.Trim()
+$env:GRAPH_CLIENT_SECRET = $plain
 $env:GRAPH_SENDER = $sender
 $env:SMOKE_TO = $to
 
@@ -45,7 +50,7 @@ const t = require(process.argv[2]).createGraphTransport();
   const i = await t.sendMail({ to: process.env.SMOKE_TO, subject: 'OIG Graph mail test ' + new Date().toISOString(),
     html: '<p dir="rtl">בדיקת שליחה דרך Microsoft 365 מהשרת. אם המייל הגיע - החיבור עובד.</p>' });
   console.log('send: ' + i.response + ' -> ' + i.accepted.join(', '));
-})().catch((e) => { console.error('FAILED: ' + e.message); process.exit(1); });
+})().catch((e) => { console.error('FAILED: ' + e.message); process.exitCode = 1; });
 '@
 # Run from a file: Windows PowerShell mangles embedded quotes in native -e arguments.
 $jsFile = Join-Path $env:TEMP 'graph-smoke.cjs'
