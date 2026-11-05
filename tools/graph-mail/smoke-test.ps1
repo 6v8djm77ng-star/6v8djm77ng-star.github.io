@@ -24,14 +24,15 @@ if ($h -ne $Hash) { Remove-Item $tmp; throw "graphTransport.cjs hash mismatch ($
 Move-Item $tmp $dst -Force
 Write-Host "graphTransport.cjs installed and verified: $dst" -ForegroundColor Green
 
-$tenant = Read-Host 'Tenant ID'
-$client = Read-Host 'Client ID'
-$sec    = Read-Host 'Client secret' -AsSecureString
-$sender = Read-Host 'Sender mailbox [izik@oig.co.il]'
-if (-not $sender) { $sender = 'izik@oig.co.il' }
-if ($sender -notmatch '^[^@\s]+@[^@\s]+\.[^@\s]+$') { throw 'Sender must be an email address - just press Enter for izik@oig.co.il.' }
-$to     = Read-Host "Send test mail to [$sender]"
-if (-not $to) { $to = $sender }
+# Non-secret values can be preset in the same command line ($env:GRAPH_TENANT_ID=...; ...),
+# so the only prompt left is the secret itself.
+$tenant = if ($env:GRAPH_TENANT_ID) { $env:GRAPH_TENANT_ID } else { Read-Host 'Tenant ID' }
+$client = if ($env:GRAPH_CLIENT_ID) { $env:GRAPH_CLIENT_ID } else { Read-Host 'Client ID' }
+$sender = if ($env:GRAPH_SENDER) { $env:GRAPH_SENDER } else { 'izik@oig.co.il' }
+$to     = if ($env:SMOKE_TO) { $env:SMOKE_TO } else { $sender }
+foreach ($a in $sender, $to) { if ($a -notmatch '^[^@\s]+@[^@\s]+\.[^@\s]+$') { throw "Not an email address: '$a'" } }
+Write-Host "tenant $tenant | app $client | from $sender | to $to"
+$sec    = Read-Host 'Paste the secret VALUE (right-click), then Enter' -AsSecureString
 
 $plain = ([Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec))).Trim()
 # A Secret ID is a GUID; the secret Value is ~40 chars and usually contains '~'.
