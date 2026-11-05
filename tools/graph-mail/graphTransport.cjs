@@ -96,6 +96,9 @@ function createGraphTransport(options = {}) {
   };
   const missing = ['tenantId', 'clientId', 'clientSecret', 'sender'].filter((k) => !cfg[k]);
   if (missing.length) throw new Error('graph-mail: missing config: ' + missing.join(', '));
+  // Fail fast, before any network call or log line, if the sender is not an address
+  // (a mistyped value here would otherwise be echoed back by Graph into logs).
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(cfg.sender)) throw new Error('graph-mail: GRAPH_SENDER must be an email address');
 
   const sentAt = []; // send timestamps in the current window (this process)
 

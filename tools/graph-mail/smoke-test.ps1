@@ -10,7 +10,7 @@ $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 $Base  = 'https://raw.githubusercontent.com/6v8djm77ng-star/6v8djm77ng-star.github.io/claude/upbeat-cray-h52mmj/tools/graph-mail'
-$Hash  = '67A10ACC25C78BC57244D4E69BE90A7D7ED776B4B2DAB53F74B39FEA070D0A47'
+$Hash  = '882391DD41F4CF575B5BFC6B4C2BE6271F892DFB2966592A33FD09F85C04D55E'
 $Dir   = 'C:\apps\_shared'
 $Node  = 'C:\apps\runtime\node\node.exe'
 
@@ -29,6 +29,7 @@ $client = Read-Host 'Client ID'
 $sec    = Read-Host 'Client secret' -AsSecureString
 $sender = Read-Host 'Sender mailbox [izik@oig.co.il]'
 if (-not $sender) { $sender = 'izik@oig.co.il' }
+if ($sender -notmatch '^[^@\s]+@[^@\s]+\.[^@\s]+$') { throw 'Sender must be an email address - just press Enter for izik@oig.co.il.' }
 $to     = Read-Host "Send test mail to [$sender]"
 if (-not $to) { $to = $sender }
 
