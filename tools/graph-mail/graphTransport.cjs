@@ -195,7 +195,17 @@ function createGraphTransport(options = {}) {
   // nodemailer-style: resolves true when credentials work (fetches a token).
   async function verify() { await getToken(); return true; }
 
-  return { sendMail, verify, close() {} };
+  // Non-secret claims from the access token, for diagnosing 403s:
+  // roles must include "Mail.Send" (admin consent granted).
+  async function inspect() {
+    const t = await getToken();
+    try {
+      const c = JSON.parse(Buffer.from(t.split('.')[1], 'base64url').toString('utf8'));
+      return { roles: c.roles || [], appid: c.appid || c.azp, tid: c.tid };
+    } catch { return { roles: null }; }
+  }
+
+  return { sendMail, verify, inspect, close() {} };
 }
 
 module.exports = { createGraphTransport, parseList };

@@ -10,7 +10,7 @@ $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 $Base  = 'https://raw.githubusercontent.com/6v8djm77ng-star/6v8djm77ng-star.github.io/claude/upbeat-cray-h52mmj/tools/graph-mail'
-$Hash  = '882391DD41F4CF575B5BFC6B4C2BE6271F892DFB2966592A33FD09F85C04D55E'
+$Hash  = '86127051A8C1F3495EB954D7CE7F6341AF818F3037667D17E20387EA3E847E06'
 $Dir   = 'C:\apps\_shared'
 $Node  = 'C:\apps\runtime\node\node.exe'
 
@@ -49,6 +49,8 @@ $js = @'
 const t = require(process.argv[2]).createGraphTransport();
 (async () => {
   await t.verify(); console.log('token: OK');
+  const c = await t.inspect();
+  console.log('roles: ' + JSON.stringify(c.roles) + (c.roles && c.roles.includes('Mail.Send') ? '  (Mail.Send granted)' : '  <-- Mail.Send MISSING: admin consent not granted'));
   const i = await t.sendMail({ to: process.env.SMOKE_TO, subject: 'OIG Graph mail test ' + new Date().toISOString(),
     html: '<p dir="rtl">בדיקת שליחה דרך Microsoft 365 מהשרת. אם המייל הגיע - החיבור עובד.</p>' });
   console.log('send: ' + i.response + ' -> ' + i.accepted.join(', '));
