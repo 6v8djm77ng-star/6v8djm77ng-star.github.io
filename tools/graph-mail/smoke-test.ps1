@@ -10,7 +10,7 @@ $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 $Base  = 'https://raw.githubusercontent.com/6v8djm77ng-star/6v8djm77ng-star.github.io/claude/upbeat-cray-h52mmj/tools/graph-mail'
-$Hash  = 'B3EA6461896055F66A640F80A08A9B68BF96D64C1B00BA5C00A09742E3BEA0FD'
+$Hash  = '67A10ACC25C78BC57244D4E69BE90A7D7ED776B4B2DAB53F74B39FEA070D0A47'
 $Dir   = 'C:\apps\_shared'
 $Node  = 'C:\apps\runtime\node\node.exe'
 
