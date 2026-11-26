@@ -1,4 +1,4 @@
-﻿# Inventory Count - one-click install & start on Windows (demo mode, no SAP).
+# Inventory Count - one-click install & start on Windows (demo mode, no SAP).
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 $Host.UI.RawUI.WindowTitle = 'Inventory Count'
