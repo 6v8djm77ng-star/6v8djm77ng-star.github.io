@@ -45,6 +45,8 @@ try {
 
   Step '3/5  Installing components (a few minutes the first time)'
   Set-Location $root
+  # npm writes warnings to stderr; on Windows PowerShell 5.1 that must not abort the install
+  $ErrorActionPreference = 'Continue'
   npm.cmd install --no-audit --no-fund
   if ($LASTEXITCODE -ne 0) { Fail 'npm install failed.' }
 
