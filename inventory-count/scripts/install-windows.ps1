@@ -47,12 +47,12 @@ try {
   Set-Location $root
   # npm writes warnings to stderr; on Windows PowerShell 5.1 that must not abort the install
   $ErrorActionPreference = 'Continue'
-  npm.cmd install --no-audit --no-fund
+  npm.cmd install --include=dev --no-audit --no-fund
   if ($LASTEXITCODE -ne 0) { Fail 'npm install failed.' }
 
   Step '4/5  Building'
   npm.cmd run build
-  if ($LASTEXITCODE -ne 0) { Fail 'Build failed.' }
+  if ($LASTEXITCODE -ne 0 -or -not (Test-Path "$root\server\dist\index.js")) { Fail 'Build failed.' }
 
   $envFile = "$root\server\.env"
   if (-not (Test-Path $envFile)) {
