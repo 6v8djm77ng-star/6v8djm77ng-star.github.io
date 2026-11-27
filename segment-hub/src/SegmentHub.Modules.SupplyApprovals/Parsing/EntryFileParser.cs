@@ -51,6 +51,12 @@ public sealed class EntryFileParser : IRecordParser<SupplyApproval>
         if (!TryDate(c[3], out var approvalDate))
         { reason = Bad($"תאריך לא חוקי '{c[3]}'"); return false; }
 
+        // Money/quantity must parse — a silent 0 would skew the expected invoice total.
+        if (!TryDec(c[12], out var quantity))
+        { reason = Bad($"כמות לא חוקית '{c[12]}'"); return false; }
+        if (!TryDec(c[15], out var unitPrice))
+        { reason = Bad($"מחיר יחידה לא חוקי '{c[15]}'"); return false; }
+
         line = new SupplyApprovalLine
         {
             SupplierCode = c[0].Trim(),
@@ -62,8 +68,8 @@ public sealed class EntryFileParser : IRecordParser<SupplyApproval>
             ItemCode = c[9].Trim(),
             Barcode = c[10].Trim(),
             LineNumber = Int(c[11]),
-            Quantity = Dec(c[12]),
-            UnitPrice = Dec(c[15]),
+            Quantity = quantity,
+            UnitPrice = unitPrice,
             RawColumns = c
         };
         return true;
@@ -74,8 +80,8 @@ public sealed class EntryFileParser : IRecordParser<SupplyApproval>
     private static bool TryDate(string s, out DateOnly d) =>
         DateOnly.TryParseExact(s.Trim(), "yyyyMMdd", CultureInfo.InvariantCulture, DateTimeStyles.None, out d);
 
-    private static decimal Dec(string s) =>
-        decimal.TryParse(s.Trim(), NumberStyles.Number, CultureInfo.InvariantCulture, out var v) ? v : 0m;
+    private static bool TryDec(string s, out decimal v) =>
+        decimal.TryParse(s.Trim(), NumberStyles.Number, CultureInfo.InvariantCulture, out v);
 
     private static int Int(string s) =>
         int.TryParse(s.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var v) ? v : 0;

@@ -82,6 +82,26 @@ public class SupplyApprovalValidatorTests
     }
 
     [Fact]
+    public async Task Multiple_approvals_in_one_file_rejects()
+    {
+        SupplyApprovalLine Line(string numAtCard) => new()
+        {
+            SupplierCode = "600060078", CardCode = "C10001", ApprovalNumber = "1",
+            ApprovalDate = DateOnly.FromDateTime(DateTime.Today),
+            DeliveryNoteRef = DocumentKey.From("2001234"), NumAtCard = numAtCard,
+            ItemCode = "I1", Barcode = "729", LineNumber = 0, Quantity = 1, UnitPrice = 100m, RawColumns = []
+        };
+        var approval = new SupplyApproval
+        {
+            SourceFileName = "Entry_x.txt", SupplierCode = "600060078",
+            Lines = [Line("5001"), Line("5002")]
+        };
+        var result = await _sut.ValidateAsync(approval, CancellationToken.None);
+        Assert.NotNull(result);
+        Assert.Equal(RejectionCode.MalformedFile, result.Code);
+    }
+
+    [Fact]
     public async Task Dn_not_found_in_sap_rejects()
     {
         _sap.NextDeliveryNote = null;

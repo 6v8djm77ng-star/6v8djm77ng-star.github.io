@@ -29,6 +29,12 @@ public sealed class SupplyApprovalValidator : IRecordValidator<SupplyApproval>
         if (approval.Lines.Any(l => l.DeliveryNoteRef.Normalized != dnRef.Normalized))
             return new RejectionReason(RejectionCode.MalformedFile, "שורות עם תעודות משלוח שונות באותו קובץ");
 
+        // One file is one approval (EasySale groups by NumAtCard). Several approvals in one file
+        // would be silently merged, so reject explicitly rather than invoice the wrong lines.
+        var numAtCard = approval.Lines[0].NumAtCard;
+        if (approval.Lines.Any(l => l.NumAtCard != numAtCard))
+            return new RejectionReason(RejectionCode.MalformedFile, "מספר אישורי אספקה באותו קובץ אינו נתמך");
+
         // The DN DocNum is unique in SAP, so the lookup keys on it; the customer card is an advisory hint.
         var cardCode = approval.Lines[0].CardCode;
 
