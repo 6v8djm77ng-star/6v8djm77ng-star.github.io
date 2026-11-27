@@ -6,7 +6,8 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- Must stay false: Microsoft.Data.SqlClient requires ICU, and we handle Hebrew (he-IL / cp1255). -->
+    <InvariantGlobalization>false</InvariantGlobalization>
     <Deterministic>true</Deterministic>
     <Company>OIG</Company>
     <Product>Segment Integration Hub</Product>
