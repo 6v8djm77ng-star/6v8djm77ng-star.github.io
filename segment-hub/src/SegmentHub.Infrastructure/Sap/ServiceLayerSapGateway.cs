@@ -161,7 +161,7 @@ public sealed class ServiceLayerSapGateway : ISapGateway
         return page.Value.Select(i => new InvoiceForHundredFile
         {
             InvoiceNumber = i.DocNum.ToString(),
-            InvoiceDate = DateOnly.Parse(i.DocDate),
+            InvoiceDate = ParseSapDate(i.DocDate),
             CustomerCode = i.CardCode,
             CustomerName = i.CardName ?? "",
             NetAmount = i.DocTotal - i.VatSum,
@@ -181,6 +181,13 @@ public sealed class ServiceLayerSapGateway : ISapGateway
                 _log.LogWarning("Failed to mark invoice {DocEntry} as sent: {Status}", entry, resp.StatusCode);
         }
     }
+
+    // Service Layer returns dates as full ISO datetimes (e.g. "2026-11-27T00:00:00Z"),
+    // which DateOnly.Parse rejects. Parse as DateTime first, then take the date.
+    private static DateOnly ParseSapDate(string raw) =>
+        DateOnly.FromDateTime(DateTime.Parse(raw,
+            System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.RoundtripKind));
 
     private sealed record ODataPage<T>(IReadOnlyList<T> Value);
     private sealed record DeliveryNoteDto(int DocEntry, int DocNum, string CardCode, string? DocumentStatus);

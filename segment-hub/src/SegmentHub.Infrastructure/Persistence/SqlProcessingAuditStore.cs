@@ -15,6 +15,7 @@ public sealed class SqlProcessingAuditStore : IProcessingAuditStore
 {
     private readonly string _connectionString;
     private readonly ILogger<SqlProcessingAuditStore> _log;
+    private int _failureCount;
 
     public SqlProcessingAuditStore(string connectionString, ILogger<SqlProcessingAuditStore> log)
     {
@@ -48,8 +49,17 @@ public sealed class SqlProcessingAuditStore : IProcessingAuditStore
         }
         catch (Exception ex)
         {
-            // Audit must never take the pipeline down, but the failure itself is loud.
-            _log.LogError(ex, "Failed to write audit row for {File}", r.SourceFileName);
+            // Audit must never take the pipeline down. The SQL store is a secondary, structured
+            // copy — every decision is already in the Serilog log file — so a DB outage is a
+            // concise one-time warning, not a per-file stack trace.
+            var n = Interlocked.Increment(ref _failureCount);
+            if (n == 1)
+                _log.LogWarning(
+                    "SQL audit write failed ({Error}). Processing continues and every decision stays in the Serilog log file. Further audit-DB failures will be counted, not stack-traced.",
+                    ex.Message);
+            else
+                _log.LogDebug("SQL audit write failed again (#{Count}) for {File}: {Error}",
+                    n, r.SourceFileName, ex.Message);
         }
     }
 }
