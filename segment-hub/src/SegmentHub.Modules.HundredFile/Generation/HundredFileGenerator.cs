@@ -75,8 +75,22 @@ public static class HundredFileGenerator
 
     private static string FormatAmount(decimal amount, int width)
     {
-        var agora = (long)Math.Round(amount * 100);
-        return agora.ToString().PadLeft(width, '0');
+        var agora = (long)Math.Round(amount * 100, MidpointRounding.AwayFromZero);
+
+        // A negative amount would put '-' mid-field and corrupt the fixed-width line; an amount
+        // wider than the field would push every following column out of place. Both are surfaced
+        // as a fault (caught by the module -> alert) instead of silently emitting a broken file.
+        // Credit/negative handling needs the Electra 100-file sign spec before it can be emitted.
+        if (agora < 0)
+            throw new InvalidOperationException(
+                $"קובץ 100: סכום שלילי ({amount}) אינו נתמך. חשבונית זיכוי דורשת טיפול נפרד לפי מפרט הסימן.");
+
+        var digits = agora.ToString();
+        if (digits.Length > width)
+            throw new InvalidOperationException(
+                $"קובץ 100: סכום {amount} חורג מרוחב השדה ({width} ספרות).");
+
+        return digits.PadLeft(width, '0');
     }
 
     private static void PadToWidth(StringBuilder sb)

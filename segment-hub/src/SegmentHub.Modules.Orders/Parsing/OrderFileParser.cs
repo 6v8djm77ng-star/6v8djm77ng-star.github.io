@@ -65,14 +65,26 @@ public sealed class OrderFileParser : IRecordParser<ElectraOrder>
             var lines = new List<ElectraOrderLine>(lineData.Count);
             foreach (var ld in lineData)
             {
+                // Money/quantity fields must parse — a silent 0 fallback would post a zero-quantity
+                // or zero-price SAP line. Reject explicitly instead. Discount stays optional (0 default).
+                if (!TryDec(ld.Cols[7], out var quantity))
+                    return OneOf<IReadOnlyList<ElectraOrder>>.Reject(RejectionCode.MalformedFile,
+                        $"כמות לא חוקית '{ld.Cols[7]}' בהזמנה {orderNum}");
+                if (!TryDec(ld.Cols[8], out var unitPrice))
+                    return OneOf<IReadOnlyList<ElectraOrder>>.Reject(RejectionCode.MalformedFile,
+                        $"מחיר יחידה לא חוקי '{ld.Cols[8]}' בהזמנה {orderNum}");
+                if (!TryDec(ld.Cols[10], out var lineTotal))
+                    return OneOf<IReadOnlyList<ElectraOrder>>.Reject(RejectionCode.MalformedFile,
+                        $"סכום שורה לא חוקי '{ld.Cols[10]}' בהזמנה {orderNum}");
+
                 lines.Add(new ElectraOrderLine
                 {
                     ItemCode = ld.Cols[5].Trim(),
                     Description = ld.Cols[6].Trim(),
-                    Quantity = Dec(ld.Cols[7]),
-                    UnitPrice = Dec(ld.Cols[8]),
+                    Quantity = quantity,
+                    UnitPrice = unitPrice,
                     Discount = Dec(ld.Cols[9]),
-                    LineTotal = Dec(ld.Cols[10]),
+                    LineTotal = lineTotal,
                     ColorCode = ld.Cols[11].Trim(),
                     SizeCode = ld.Cols[12].Trim(),
                     ModelCode = ld.Cols[13].Trim(),
@@ -108,6 +120,9 @@ public sealed class OrderFileParser : IRecordParser<ElectraOrder>
 
     private static decimal Dec(string s) =>
         decimal.TryParse(s.Trim(), NumberStyles.Number, CultureInfo.InvariantCulture, out var v) ? v : 0m;
+
+    private static bool TryDec(string s, out decimal v) =>
+        decimal.TryParse(s.Trim(), NumberStyles.Number, CultureInfo.InvariantCulture, out v);
 
     private static int Int(string s) =>
         int.TryParse(s.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var v) ? v : 0;

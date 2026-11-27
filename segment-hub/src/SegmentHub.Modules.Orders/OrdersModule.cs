@@ -55,6 +55,7 @@ public sealed class OrdersModule : ISegmentModule
 
             var orders = parsed.Value!;
             int created = 0;
+            var rejected = new List<string>();
 
             foreach (var order in orders)
             {
@@ -62,6 +63,7 @@ public sealed class OrdersModule : ISegmentModule
                 if (invalid is not null)
                 {
                     _log.LogWarning("Rejected order {Order}: {Reason}", order.OrderNumber, invalid);
+                    rejected.Add($"{order.OrderNumber} [{(int)invalid.Code}] {invalid.Message}");
                     continue;
                 }
 
@@ -79,6 +81,15 @@ public sealed class OrdersModule : ISegmentModule
                 }
                 created++;
             }
+
+            // A multi-order file where some orders were rejected must not look clean. Per-order
+            // rejections are logged above; this summary makes the file-level outcome explicit in the
+            // Serilog audit. TODO (when the SQL audit DB is wired): one audit row per order, not per file.
+            if (rejected.Count > 0)
+                _log.LogWarning("Orders file {File}: {Created}/{Total} processed, {Rejected} rejected — {Detail}",
+                    file.Name, created, orders.Count, rejected.Count, string.Join(" | ", rejected));
+            else
+                _log.LogInformation("Orders file {File}: {Created} order(s) processed, 0 rejected", file.Name, created);
 
             return ProcessingResult.Ok(file.Name, "SalesOrder", docEntry: null, shadow: shadowMode);
         }
