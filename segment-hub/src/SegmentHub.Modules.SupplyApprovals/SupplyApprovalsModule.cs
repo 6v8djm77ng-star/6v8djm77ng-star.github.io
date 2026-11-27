@@ -14,7 +14,8 @@ namespace SegmentHub.Modules.SupplyApprovals;
 public sealed class SupplyApprovalsModule : ISegmentModule
 {
     public const string ModuleKey = "SupplyApprovals";
-    private const string Encoding = "utf-8";
+    // EasySale reads the Entry_* files as Windows-1255 (CsvReader codepage 1255).
+    private const string Encoding = "windows-1255";
 
     private readonly IFileDecoder _decoder;
     private readonly IRecordParser<SupplyApproval> _parser;

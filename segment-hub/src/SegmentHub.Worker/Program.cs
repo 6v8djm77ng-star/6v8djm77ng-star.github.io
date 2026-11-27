@@ -27,17 +27,9 @@ try
     builder.Services.AddSegmentHubInfrastructure(builder.Configuration);
 
     // Register each interface module. Adding a new interface is one line here + its module project.
-    builder.Services.AddSupplyApprovalsModule(fatherCardResolverFactory: sp =>
-    {
-        var opt = sp.GetRequiredService<IOptions<HubOptions>>().Value;
-        return branch => opt.FatherCardByBranch.TryGetValue(branch, out var fc) ? fc : opt.DefaultFatherCard;
-    });
+    builder.Services.AddSupplyApprovalsModule();
 
-    builder.Services.AddOrdersModule(fatherCardResolverFactory: sp =>
-    {
-        var opt = sp.GetRequiredService<IOptions<HubOptions>>().Value;
-        return branch => opt.FatherCardByBranch.TryGetValue(branch, out var fc) ? fc : opt.DefaultFatherCard;
-    });
+    builder.Services.AddOrdersModule();
 
     builder.Services.AddDeliveryNotesModule(fatherCardResolverFactory: sp =>
     {

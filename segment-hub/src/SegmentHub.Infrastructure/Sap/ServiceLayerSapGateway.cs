@@ -94,17 +94,13 @@ public sealed class ServiceLayerSapGateway : ISapGateway
             NumAtCard = draft.ElectraOrderRef,
             DocDate = draft.OrderDate.ToString("yyyy-MM-dd"),
             DocDueDate = draft.DeliveryDate.ToString("yyyy-MM-dd"),
-            Comments = draft.IsHomeDelivery
-                ? $"בית לקוח: {draft.CustomerName} {draft.CustomerPhone} {draft.CustomerAddress} {draft.CustomerCity}"
-                : null,
+            Comments = draft.IsHomeDelivery ? $"בית לקוח: {draft.ClientAddress}" : null,
             DocumentLines = draft.Lines.Select(l => new
             {
                 l.ItemCode,
                 ItemDescription = l.Description,
                 l.Quantity,
-                UnitPrice = l.UnitPrice,
-                DiscountPercent = l.Discount,
-                WarehouseCode = l.WarehouseCode
+                UnitPrice = l.UnitPrice
             }).ToArray()
         };
 

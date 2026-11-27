@@ -7,18 +7,13 @@ namespace SegmentHub.Modules.SupplyApprovals.Mapping;
 public sealed class SupplyApprovalToInvoiceMapper : IDocumentMapper<SupplyApproval, InvoiceDraft>
 {
     private readonly ISapGateway _sap;
-    private readonly Func<string, string> _fatherCardResolver;
 
-    public SupplyApprovalToInvoiceMapper(ISapGateway sap, Func<string, string> fatherCardResolver)
-    {
-        _sap = sap;
-        _fatherCardResolver = fatherCardResolver;
-    }
+    public SupplyApprovalToInvoiceMapper(ISapGateway sap) => _sap = sap;
 
     public async Task<InvoiceDraft> MapAsync(SupplyApproval approval, CancellationToken ct)
     {
-        var fatherCard = _fatherCardResolver(approval.Lines[0].BranchCode);
-        var dn = await _sap.FindOpenDeliveryNoteAsync(approval.DeliveryNoteRef, fatherCard, ct)
+        var cardCode = approval.Lines[0].CardCode;
+        var dn = await _sap.FindOpenDeliveryNoteAsync(approval.DeliveryNoteRef, cardCode, ct)
             ?? throw new InvalidOperationException(
                 $"Delivery note {approval.DeliveryNoteRef.Normalized} vanished between validation and mapping.");
 

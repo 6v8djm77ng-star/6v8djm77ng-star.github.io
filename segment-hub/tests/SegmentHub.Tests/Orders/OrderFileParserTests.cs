@@ -8,59 +8,56 @@ public class OrderFileParserTests
 {
     private readonly OrderFileParser _parser = new();
 
-    private static string MakeRow(string orderNum = "103500001", string orderDate = "20261127",
-        string deliveryDate = "20261201", string itemCode = "EL-1234", int colCount = 38)
+    // 38-column Electra order row, mirroring the EasySale importer column map.
+    private static string MakeRow(
+        string orderNum = "199549", string cardCode = "2501685",
+        string docDate = "20261127", string dueDate = "20261201",
+        string itemCode = "21714", string quantity = "1", string unitPrice = "100.00",
+        string lineTotal = "100.00", string fatherCard = "2005000",
+        string? addrStreet = null)
     {
-        var cols = new string[colCount];
-        cols[0] = "600060078";
-        cols[1] = "001";
-        cols[2] = orderNum;
-        cols[3] = orderDate;
-        cols[4] = deliveryDate;
-        cols[5] = itemCode;
-        cols[6] = "מקרר אלקטרה 500 ליטר";
-        cols[7] = "1";
-        cols[8] = "3500.00";
-        cols[9] = "0";
-        cols[10] = "3500.00";
-        cols[11] = "WH";
-        cols[12] = "L";
-        cols[13] = "MDL-500";
-        cols[14] = "";
-        cols[15] = "";
-        cols[16] = "";
-        cols[17] = "";
-        cols[18] = "001";
-        cols[19] = "01";
-        cols[20] = "1";
-        cols[21] = "";
-        for (int i = 22; i < colCount; i++) cols[i] = "";
-        return string.Join('\t', cols);
+        var c = new string[38];
+        for (int i = 0; i < 38; i++) c[i] = "";
+        c[0] = fatherCard;
+        c[1] = orderNum;
+        c[4] = cardCode;
+        c[5] = docDate;
+        c[6] = dueDate;
+        c[8] = "1504.27";
+        c[11] = "";
+        c[13] = itemCode;
+        c[14] = "מקרר אלקטרה";
+        c[16] = "7290110888202";
+        c[17] = "1";
+        c[18] = quantity;
+        c[20] = "0";
+        c[21] = unitPrice;
+        c[23] = lineTotal;
+        c[25] = "";
+        if (addrStreet != null) { c[29] = addrStreet; c[30] = "1"; }
+        return string.Join('\t', c);
     }
 
     [Fact]
     public void Parse_SingleOrder_ReturnsOrder()
     {
-        var text = MakeRow();
-        var result = _parser.ParseAll("test.txt", text);
-
+        var result = _parser.ParseAll("test.txt", MakeRow());
         Assert.True(result.Ok);
         Assert.Single(result.Value!);
         var order = result.Value![0];
-        Assert.Equal("103500001", order.OrderNumber);
-        Assert.Equal("600060078", order.SupplierCode);
-        Assert.Equal("001", order.BranchCode);
+        Assert.Equal("199549", order.OrderNumber);
+        Assert.Equal("2005000", order.FatherCard);
+        Assert.Equal("2501685", order.CardCode);
         Assert.Single(order.Lines);
-        Assert.Equal("EL-1234", order.Lines[0].ItemCode);
-        Assert.Equal(3500m, order.Lines[0].LineTotal);
+        Assert.Equal("21714", order.Lines[0].ItemCode);
+        Assert.Equal(100m, order.Lines[0].LineTotal);
     }
 
     [Fact]
-    public void Parse_MultipleOrdersInOneFile_GroupsByOrderNumber()
+    public void Parse_MultipleOrdersInOneFile_GroupsByOrderAndCustomer()
     {
-        var text = MakeRow("103500001") + "\r\n" + MakeRow("103500001", itemCode: "EL-5678") + "\r\n" + MakeRow("103500002");
+        var text = MakeRow("199549") + "\r\n" + MakeRow("199549", itemCode: "99999") + "\r\n" + MakeRow("199777");
         var result = _parser.ParseAll("multi.txt", text);
-
         Assert.True(result.Ok);
         Assert.Equal(2, result.Value!.Count);
         Assert.Equal(2, result.Value![0].Lines.Count);
@@ -70,9 +67,7 @@ public class OrderFileParserTests
     [Fact]
     public void Parse_WrongColumnCount_Rejects()
     {
-        var text = "col1\tcol2\tcol3";
-        var result = _parser.Parse("bad.txt", text);
-
+        var result = _parser.Parse("bad.txt", "col1\tcol2\tcol3");
         Assert.False(result.Ok);
         Assert.Equal(RejectionCode.WrongColumnCount, result.Rejection!.Code);
     }
@@ -86,32 +81,37 @@ public class OrderFileParserTests
     }
 
     [Fact]
-    public void Parse_InvalidDate_Rejects()
+    public void Parse_InvalidDocDate_Rejects()
     {
-        var text = MakeRow(orderDate: "NOTADATE");
-        var result = _parser.Parse("bad_date.txt", text);
-
+        var result = _parser.Parse("bad_date.txt", MakeRow(docDate: "NOTADATE"));
         Assert.False(result.Ok);
         Assert.Equal(RejectionCode.MalformedFile, result.Rejection!.Code);
-        Assert.Contains("תאריך הזמנה", result.Rejection.Message);
+        Assert.Contains("תאריך מסמך", result.Rejection.Message);
+    }
+
+    [Fact]
+    public void Parse_BadQuantity_Rejects()
+    {
+        var result = _parser.Parse("bad_qty.txt", MakeRow(quantity: "NaN"));
+        Assert.False(result.Ok);
+        Assert.Equal(RejectionCode.MalformedFile, result.Rejection!.Code);
+        Assert.Contains("כמות", result.Rejection.Message);
     }
 
     [Fact]
     public void Parse_B2COrder_DetectsHomeDelivery()
     {
-        var cols = new string[38];
-        cols[0] = "600060078"; cols[1] = "001"; cols[2] = "999600001";
-        cols[3] = "20261127"; cols[4] = "20261201"; cols[5] = "EL-9999";
-        cols[6] = "תנור"; cols[7] = "1"; cols[8] = "2000"; cols[9] = "0"; cols[10] = "2000";
-        cols[11] = ""; cols[12] = ""; cols[13] = "";
-        cols[14] = "ישראל ישראלי"; cols[15] = "0501234567"; cols[16] = "הרצל 1"; cols[17] = "תל אביב";
-        cols[18] = ""; cols[19] = "01"; cols[20] = "1"; cols[21] = "";
-        for (int i = 22; i < 38; i++) cols[i] = "";
-        var text = string.Join('\t', cols);
-
-        var result = _parser.Parse("b2c.txt", text);
+        var result = _parser.Parse("b2c.txt", MakeRow(addrStreet: "הרצל"));
         Assert.True(result.Ok);
         Assert.True(result.Value!.IsHomeDelivery);
-        Assert.Equal("ישראל ישראלי", result.Value!.CustomerName);
+        Assert.Contains("הרצל", result.Value!.ClientAddress);
+    }
+
+    [Fact]
+    public void Parse_B2BOrder_NoHomeDelivery()
+    {
+        var result = _parser.Parse("b2b.txt", MakeRow());
+        Assert.True(result.Ok);
+        Assert.False(result.Value!.IsHomeDelivery);
     }
 }

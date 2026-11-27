@@ -6,9 +6,9 @@ using SegmentHub.Domain.Model;
 namespace SegmentHub.Modules.SupplyApprovals.Parsing;
 
 /// <summary>
-/// Parses an Entry_* supply-approval file (ממשק 11). Layout observed on server 220 (2026-11-27):
-/// 17 tab-separated columns, UTF-8, CRLF. The column map lives here only; the engine never knows it.
-/// Expected bad input (wrong column count, bad numbers) returns a typed rejection — never an exception.
+/// Parses an Entry_* supply-approval file (ממשק 11). 17 tab-separated columns, Windows-1255, CRLF.
+/// The column map mirrors the EasySale importer (BuildFileSupplyApprovalFormFile / BuildSupplyApprovalItem)
+/// and lives here only; the engine never knows it. Bad input returns a typed rejection, never an exception.
 /// </summary>
 public sealed class EntryFileParser : IRecordParser<SupplyApproval>
 {
@@ -54,15 +54,16 @@ public sealed class EntryFileParser : IRecordParser<SupplyApproval>
         line = new SupplyApprovalLine
         {
             SupplierCode = c[0].Trim(),
-            BranchCode = c[1].Trim(),
+            CardCode = c[1].Trim(),
             ApprovalNumber = c[2].Trim(),
             ApprovalDate = approvalDate,
             DeliveryNoteRef = DocumentKey.From(c[4]),
-            ElectraOrderRef = DocumentKey.From(c[5]),
-            UnitPrice = Dec(c[7]),
-            Quantity = Dec(c[8]),
-            ProductType = Int(c[11]),
-            LineTotal = Dec(c[15]),
+            NumAtCard = c[5].Trim(),
+            ItemCode = c[9].Trim(),
+            Barcode = c[10].Trim(),
+            LineNumber = Int(c[11]),
+            Quantity = Dec(c[12]),
+            UnitPrice = Dec(c[15]),
             RawColumns = c
         };
         return true;

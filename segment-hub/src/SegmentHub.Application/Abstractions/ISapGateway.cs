@@ -53,10 +53,8 @@ public sealed record SalesOrderDraft
     public required DateOnly DeliveryDate { get; init; }
     public required string SourceFileName { get; init; }
     public required IReadOnlyList<SalesOrderLineDraft> Lines { get; init; }
-    public string? CustomerName { get; init; }
-    public string? CustomerPhone { get; init; }
-    public string? CustomerAddress { get; init; }
-    public string? CustomerCity { get; init; }
+    /// <summary>B2C delivery address; null for a branch (B2B) order.</summary>
+    public string? ClientAddress { get; init; }
     public bool IsHomeDelivery { get; init; }
 }
 
@@ -66,7 +64,7 @@ public sealed record SalesOrderLineDraft
     public required string Description { get; init; }
     public required decimal Quantity { get; init; }
     public required decimal UnitPrice { get; init; }
-    public required decimal Discount { get; init; }
-    public required string WarehouseCode { get; init; }
     public required int LineNumber { get; init; }
+    public string? Barcode { get; init; }
+    public string? FreeText { get; init; }
 }

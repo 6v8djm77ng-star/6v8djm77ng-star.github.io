@@ -6,38 +6,29 @@ namespace SegmentHub.Modules.Orders.Mapping;
 /// <summary>Maps a validated ElectraOrder to a SalesOrderDraft ready for SAP.</summary>
 public sealed class OrderToSalesOrderMapper : IDocumentMapper<ElectraOrder, SalesOrderDraft>
 {
-    private readonly Func<string, string> _fatherCardResolver;
-
-    public OrderToSalesOrderMapper(Func<string, string> fatherCardResolver)
-        => _fatherCardResolver = fatherCardResolver;
-
     public Task<SalesOrderDraft> MapAsync(ElectraOrder order, CancellationToken ct)
     {
-        var cardCode = _fatherCardResolver(order.BranchCode);
-
         var lines = order.Lines.Select(l => new SalesOrderLineDraft
         {
             ItemCode = l.ItemCode,
             Description = l.Description,
             Quantity = l.Quantity,
             UnitPrice = l.UnitPrice,
-            Discount = l.Discount,
-            WarehouseCode = l.WarehouseCode,
-            LineNumber = l.OrderLineNumber
+            LineNumber = l.LineNumber,
+            Barcode = NullIfEmpty(l.Barcode),
+            FreeText = NullIfEmpty(l.FreeText)
         }).ToList();
 
         var draft = new SalesOrderDraft
         {
-            CardCode = cardCode,
+            // The order file carries the customer business partner directly (col 4).
+            CardCode = order.CardCode,
             ElectraOrderRef = order.OrderNumber,
             OrderDate = order.OrderDate,
             DeliveryDate = order.DeliveryDate,
             SourceFileName = order.SourceFileName,
             Lines = lines,
-            CustomerName = NullIfEmpty(order.CustomerName),
-            CustomerPhone = NullIfEmpty(order.CustomerPhone),
-            CustomerAddress = NullIfEmpty(order.CustomerAddress),
-            CustomerCity = NullIfEmpty(order.CustomerCity),
+            ClientAddress = NullIfEmpty(order.ClientAddress),
             IsHomeDelivery = order.IsHomeDelivery
         };
 

@@ -12,14 +12,8 @@ namespace SegmentHub.Modules.SupplyApprovals.Rules;
 public sealed class SupplyApprovalValidator : IRecordValidator<SupplyApproval>
 {
     private readonly ISapGateway _sap;
-    private readonly Func<string, string> _fatherCardResolver;
 
-    /// <param name="fatherCardResolver">Maps a branch code to the Electra father card (2005000/2004999/2005207).</param>
-    public SupplyApprovalValidator(ISapGateway sap, Func<string, string> fatherCardResolver)
-    {
-        _sap = sap;
-        _fatherCardResolver = fatherCardResolver;
-    }
+    public SupplyApprovalValidator(ISapGateway sap) => _sap = sap;
 
     public async Task<RejectionReason?> ValidateAsync(SupplyApproval approval, CancellationToken ct)
     {
@@ -35,12 +29,13 @@ public sealed class SupplyApprovalValidator : IRecordValidator<SupplyApproval>
         if (approval.Lines.Any(l => l.DeliveryNoteRef.Normalized != dnRef.Normalized))
             return new RejectionReason(RejectionCode.MalformedFile, "שורות עם תעודות משלוח שונות באותו קובץ");
 
-        var fatherCard = _fatherCardResolver(approval.Lines[0].BranchCode);
+        // The DN DocNum is unique in SAP, so the lookup keys on it; the customer card is an advisory hint.
+        var cardCode = approval.Lines[0].CardCode;
 
-        var dn = await _sap.FindOpenDeliveryNoteAsync(dnRef, fatherCard, ct);
+        var dn = await _sap.FindOpenDeliveryNoteAsync(dnRef, cardCode, ct);
         if (dn is null)
             return new RejectionReason(RejectionCode.LinkedDeliveryNoteNotFound,
-                $"לא נמצאה תעודת משלוח פתוחה {dnRef.Normalized} (גולמי: '{dnRef.Raw}') עבור כרטיס אב {fatherCard}");
+                $"לא נמצאה תעודת משלוח פתוחה {dnRef.Normalized} (גולמי: '{dnRef.Raw}') עבור לקוח {cardCode}");
 
         if (!dn.IsOpen)
             return new RejectionReason(RejectionCode.DeliveryNoteAlreadyInvoiced,

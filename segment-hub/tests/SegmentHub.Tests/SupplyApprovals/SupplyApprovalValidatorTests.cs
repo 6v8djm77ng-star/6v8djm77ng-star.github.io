@@ -14,7 +14,7 @@ public class SupplyApprovalValidatorTests
 
     public SupplyApprovalValidatorTests()
     {
-        _sut = new SupplyApprovalValidator(_sap, _ => "2005000");
+        _sut = new SupplyApprovalValidator(_sap);
         _sap.NextDeliveryNote = new DeliveryNoteHandle(1, 2001234, "C10001", true);
     }
 
@@ -26,15 +26,16 @@ public class SupplyApprovalValidatorTests
         var lines = Enumerable.Range(0, lineCount).Select(i => new SupplyApprovalLine
         {
             SupplierCode = "600060078",
-            BranchCode = "001",
+            CardCode = "C10001",
             ApprovalNumber = "10000001",
             ApprovalDate = DateOnly.FromDateTime(DateTime.Today),
             DeliveryNoteRef = DocumentKey.From(i == 1 && secondDnRef != null ? secondDnRef : dnRef),
-            ElectraOrderRef = DocumentKey.From("10300001"),
-            UnitPrice = 100m,
+            NumAtCard = "10300001",
+            ItemCode = "ITEM1",
+            Barcode = "729",
+            LineNumber = i,
             Quantity = 1,
-            ProductType = 0,
-            LineTotal = 100m,
+            UnitPrice = 100m,
             RawColumns = []
         }).ToList();
 

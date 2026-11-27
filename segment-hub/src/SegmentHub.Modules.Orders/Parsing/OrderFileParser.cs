@@ -6,23 +6,21 @@ using SegmentHub.Domain.Model;
 namespace SegmentHub.Modules.Orders.Parsing;
 
 /// <summary>
-/// Parses an Electra order file (ממשק 1). 38 tab-separated columns, Windows-1255.
-/// One file may contain multiple orders (grouped by OrderNumber, c2).
-/// Returns a list of ElectraOrder per unique OrderNumber.
+/// Parses an Electra order file (ממשק 1). Tab-separated, Windows-1255, no header — 38 columns.
+/// The column map mirrors the EasySale importer (ESG_SegmentFiles_API, BuildFileOrderFormFile /
+/// BuildOrderItem): one file may hold several orders, grouped by order number (col 1) + customer (col 4).
 /// </summary>
 public sealed class OrderFileParser : IRecordParser<ElectraOrder>
 {
     public const int ExpectedColumns = 38;
     private static readonly char[] LineSeparators = ['\r', '\n'];
 
-    /// <summary>
-    /// Parses the file. Since one file can contain multiple orders, we return the FIRST order.
-    /// For multi-order files, the host should call ParseAll and loop.
-    /// </summary>
     public OneOf<ElectraOrder> Parse(string fileName, string text)
     {
         var orders = ParseAll(fileName, text);
-        return orders.Ok ? OneOf<ElectraOrder>.Success(orders.Value![0]) : OneOf<ElectraOrder>.Reject(orders.Rejection!.Code, orders.Rejection.Message);
+        return orders.Ok
+            ? OneOf<ElectraOrder>.Success(orders.Value![0])
+            : OneOf<ElectraOrder>.Reject(orders.Rejection!.Code, orders.Rejection.Message);
     }
 
     public OneOf<IReadOnlyList<ElectraOrder>> ParseAll(string fileName, string text)
@@ -31,88 +29,101 @@ public sealed class OrderFileParser : IRecordParser<ElectraOrder>
         if (rows.Length == 0)
             return OneOf<IReadOnlyList<ElectraOrder>>.Reject(RejectionCode.MalformedFile, "קובץ הזמנות ריק");
 
-        var grouped = new Dictionary<string, List<(string[] Cols, string HeaderBranch, DateOnly OrderDate, DateOnly DeliveryDate,
-            string CustName, string CustPhone, string CustAddr, string CustCity, string DelBranch)>>();
+        // Preserve first-seen order of groups; key = orderNumber (col1) + customer (col4).
+        var order = new List<string>();
+        var groups = new Dictionary<string, List<string[]>>();
 
-        foreach (var row in rows)
+        foreach (var raw in rows)
         {
-            var cols = row.Split('\t');
+            var cols = raw.Split('\t');
             if (cols.Length != ExpectedColumns)
                 return OneOf<IReadOnlyList<ElectraOrder>>.Reject(RejectionCode.WrongColumnCount,
                     $"צפויות {ExpectedColumns} עמודות, התקבלו {cols.Length}");
 
-            var orderNum = cols[2].Trim();
+            var orderNum = cols[1].Trim();
             if (string.IsNullOrEmpty(orderNum))
                 return OneOf<IReadOnlyList<ElectraOrder>>.Reject(RejectionCode.MalformedFile, "מספר הזמנה ריק");
 
-            if (!TryDate(cols[3], out var orderDate))
-                return OneOf<IReadOnlyList<ElectraOrder>>.Reject(RejectionCode.MalformedFile, $"תאריך הזמנה לא חוקי '{cols[3]}'");
-
-            if (!TryDate(cols[4], out var deliveryDate))
-                return OneOf<IReadOnlyList<ElectraOrder>>.Reject(RejectionCode.MalformedFile, $"תאריך אספקה לא חוקי '{cols[4]}'");
-
-            if (!grouped.ContainsKey(orderNum))
-                grouped[orderNum] = [];
-
-            grouped[orderNum].Add((cols, cols[1].Trim(), orderDate, deliveryDate,
-                cols[14].Trim(), cols[15].Trim(), cols[16].Trim(), cols[17].Trim(), cols[18].Trim()));
+            var key = orderNum + "|" + cols[4].Trim();
+            if (!groups.TryGetValue(key, out var list))
+            {
+                list = [];
+                groups[key] = list;
+                order.Add(key);
+            }
+            list.Add(cols);
         }
 
-        var orders = new List<ElectraOrder>(grouped.Count);
-        foreach (var (orderNum, lineData) in grouped)
+        var result = new List<ElectraOrder>(order.Count);
+        foreach (var key in order)
         {
-            var first = lineData[0];
-            var lines = new List<ElectraOrderLine>(lineData.Count);
-            foreach (var ld in lineData)
+            var rowsForOrder = groups[key];
+            var head = rowsForOrder[0];
+
+            if (!TryDate(head[5], out var docDate))
+                return OneOf<IReadOnlyList<ElectraOrder>>.Reject(RejectionCode.MalformedFile,
+                    $"תאריך מסמך לא חוקי '{head[5]}' בהזמנה {head[1].Trim()}");
+            if (!TryDate(head[6], out var dueDate))
+                return OneOf<IReadOnlyList<ElectraOrder>>.Reject(RejectionCode.MalformedFile,
+                    $"תאריך אספקה לא חוקי '{head[6]}' בהזמנה {head[1].Trim()}");
+
+            var lines = new List<ElectraOrderLine>(rowsForOrder.Count);
+            foreach (var c in rowsForOrder)
             {
-                // Money/quantity fields must parse — a silent 0 fallback would post a zero-quantity
-                // or zero-price SAP line. Reject explicitly instead. Discount stays optional (0 default).
-                if (!TryDec(ld.Cols[7], out var quantity))
+                if (!TryDec(c[18], out var qty))
                     return OneOf<IReadOnlyList<ElectraOrder>>.Reject(RejectionCode.MalformedFile,
-                        $"כמות לא חוקית '{ld.Cols[7]}' בהזמנה {orderNum}");
-                if (!TryDec(ld.Cols[8], out var unitPrice))
+                        $"כמות לא חוקית '{c[18]}' בהזמנה {head[1].Trim()}");
+                if (!TryDec(c[21], out var unitPrice))
                     return OneOf<IReadOnlyList<ElectraOrder>>.Reject(RejectionCode.MalformedFile,
-                        $"מחיר יחידה לא חוקי '{ld.Cols[8]}' בהזמנה {orderNum}");
-                if (!TryDec(ld.Cols[10], out var lineTotal))
+                        $"מחיר יחידה לא חוקי '{c[21]}' בהזמנה {head[1].Trim()}");
+                if (!TryDec(c[23], out var lineTotal))
                     return OneOf<IReadOnlyList<ElectraOrder>>.Reject(RejectionCode.MalformedFile,
-                        $"סכום שורה לא חוקי '{ld.Cols[10]}' בהזמנה {orderNum}");
+                        $"סכום שורה לא חוקי '{c[23]}' בהזמנה {head[1].Trim()}");
 
                 lines.Add(new ElectraOrderLine
                 {
-                    ItemCode = ld.Cols[5].Trim(),
-                    Description = ld.Cols[6].Trim(),
-                    Quantity = quantity,
+                    ItemCode = c[13].Trim(),
+                    Description = c[14].Trim(),
+                    Barcode = c[16].Trim(),
+                    LineNumber = Int(c[17]),
+                    Quantity = qty,
+                    CurrencyCode = Int(c[20]),
                     UnitPrice = unitPrice,
-                    Discount = Dec(ld.Cols[9]),
                     LineTotal = lineTotal,
-                    ColorCode = ld.Cols[11].Trim(),
-                    SizeCode = ld.Cols[12].Trim(),
-                    ModelCode = ld.Cols[13].Trim(),
-                    WarehouseCode = ld.Cols[19].Trim(),
-                    OrderLineNumber = Int(ld.Cols[20]),
-                    Remark = ld.Cols[21].Trim(),
-                    RawColumns = ld.Cols
+                    FreeText = c[25].Trim(),
+                    RawColumns = c
                 });
             }
 
-            orders.Add(new ElectraOrder
+            result.Add(new ElectraOrder
             {
                 SourceFileName = fileName,
-                SupplierCode = first.Cols[0].Trim(),
-                BranchCode = first.HeaderBranch,
-                OrderNumber = orderNum,
-                OrderDate = first.OrderDate,
-                DeliveryDate = first.DeliveryDate,
-                CustomerName = first.CustName,
-                CustomerPhone = first.CustPhone,
-                CustomerAddress = first.CustAddr,
-                CustomerCity = first.CustCity,
-                DeliveryBranchCode = first.DelBranch,
+                FatherCard = head[0].Trim(),
+                OrderNumber = head[1].Trim(),
+                CardCode = head[4].Trim(),
+                OrderDate = docDate,
+                DeliveryDate = dueDate,
+                PriceWithoutVat = Dec(head[8]),
+                Comments = head[11].Trim(),
+                ClientAddress = BuildClientAddress(head),
                 Lines = lines
             });
         }
 
-        return OneOf<IReadOnlyList<ElectraOrder>>.Success(orders);
+        return OneOf<IReadOnlyList<ElectraOrder>>.Success(result);
+    }
+
+    /// <summary>B2C delivery address, composed exactly as the EasySale importer does for ImportOrder.</summary>
+    private static string BuildClientAddress(string[] c)
+    {
+        var v27 = c[27].Trim();
+        var v29 = c[29].Trim();
+        var v30 = c[30].Trim();
+        var v31 = c[31].Trim();
+        var v32 = c[32].Trim();
+        var v33 = c[33].Trim();
+        if ((v27 + v29 + v30 + v31 + v32 + v33).Length == 0) return "";
+        return $"{v29} {v30},{v27} , {v33} , {v31} , {v32}";
     }
 
     private static bool TryDate(string s, out DateOnly d) =>

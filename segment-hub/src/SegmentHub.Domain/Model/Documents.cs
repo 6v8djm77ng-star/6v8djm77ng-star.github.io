@@ -8,20 +8,28 @@ public sealed record SegmentFile(string Name, byte[] Content, DateTimeOffset Rec
     public long Length => Content.LongLength;
 }
 
-/// <summary>One parsed line of a Supply Approval (ממשק 11, Entry_* file). 17 tab columns as observed on 220.</summary>
+/// <summary>
+/// One parsed line of a Supply Approval (ממשק 11, Entry_* file). Column indices mirror the EasySale
+/// importer (ESG_SegmentFiles_API, BuildFileSupplyApprovalFormFile / BuildSupplyApprovalItem):
+/// tab-separated, Windows-1255, no header.
+/// </summary>
 public sealed record SupplyApprovalLine
 {
-    public required string SupplierCode { get; init; }      // c1  - 600060078 (constant)
-    public required string BranchCode { get; init; }        // c2  - 3-digit branch
-    public required string ApprovalNumber { get; init; }    // c3  - 8-digit Segment approval id
-    public required DateOnly ApprovalDate { get; init; }     // c4  - yyyyMMdd
-    public required DocumentKey DeliveryNoteRef { get; init; } // c5  - DN (200xxxx) or invoice (109xxxx)
-    public required DocumentKey ElectraOrderRef { get; init; } // c6  - Electra order (103.../999...)
-    public required decimal UnitPrice { get; init; }        // c8
-    public required decimal Quantity { get; init; }         // c9
-    public required int ProductType { get; init; }          // c12 - 0..4
-    public required decimal LineTotal { get; init; }        // c16
-    public required string[] RawColumns { get; init; }      // full verbatim row for audit
+    public required string SupplierCode { get; init; }         // [0]  - 600060078 (constant, unused by import)
+    public required string CardCode { get; init; }             // [1]  - customer business partner
+    public required string ApprovalNumber { get; init; }       // [2]  - Segment approval id
+    public required DateOnly ApprovalDate { get; init; }        // [3]  - yyyyMMdd (DocDate)
+    public required DocumentKey DeliveryNoteRef { get; init; }  // [4]  - linked DN DocNum
+    public required string NumAtCard { get; init; }            // [5]  - grouping key
+    public required string ItemCode { get; init; }             // [9]
+    public required string Barcode { get; init; }              // [10]
+    public required int LineNumber { get; init; }              // [11]
+    public required decimal Quantity { get; init; }            // [12]
+    public required decimal UnitPrice { get; init; }           // [15]
+    public required string[] RawColumns { get; init; }         // full verbatim row for audit
+
+    /// <summary>Line total derived from quantity x unit price (the file has no explicit total).</summary>
+    public decimal LineTotal => Quantity * UnitPrice;
 }
 
 /// <summary>A Supply Approval document: the header plus its lines, parsed from one Entry_* file.</summary>

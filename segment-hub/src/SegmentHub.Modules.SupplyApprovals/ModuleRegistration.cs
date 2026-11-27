@@ -10,20 +10,18 @@ namespace SegmentHub.Modules.SupplyApprovals;
 public static class ModuleRegistration
 {
     /// <summary>
-    /// Wires the Supply Approvals interface. <paramref name="fatherCardResolver"/> maps a branch code to
-    /// the Electra father card and is supplied by the host from HubOptions, keeping config out of the module.
+    /// Wires the Supply Approvals interface. The approval file carries the customer card directly,
+    /// and the DN lookup keys on the (unique) DocNum, so no branch→father-card resolver is needed.
     /// </summary>
-    public static IServiceCollection AddSupplyApprovalsModule(
-        this IServiceCollection services,
-        Func<IServiceProvider, Func<string, string>> fatherCardResolverFactory)
+    public static IServiceCollection AddSupplyApprovalsModule(this IServiceCollection services)
     {
         services.AddSingleton<IRecordParser<SupplyApproval>, EntryFileParser>();
 
         services.AddSingleton<IRecordValidator<SupplyApproval>>(sp =>
-            new SupplyApprovalValidator(sp.GetRequiredService<ISapGateway>(), fatherCardResolverFactory(sp)));
+            new SupplyApprovalValidator(sp.GetRequiredService<ISapGateway>()));
 
         services.AddSingleton<IDocumentMapper<SupplyApproval, InvoiceDraft>>(sp =>
-            new SupplyApprovalToInvoiceMapper(sp.GetRequiredService<ISapGateway>(), fatherCardResolverFactory(sp)));
+            new SupplyApprovalToInvoiceMapper(sp.GetRequiredService<ISapGateway>()));
 
         services.AddSingleton<ISegmentModule, SupplyApprovalsModule>();
         return services;
