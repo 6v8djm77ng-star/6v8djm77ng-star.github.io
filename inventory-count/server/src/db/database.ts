@@ -153,6 +153,16 @@ const migrations: string[] = [
     details   TEXT
   );
   `,
+  // v2: photo of an exception item (stored in the DB so it is part of the daily backup)
+  `
+  CREATE TABLE exception_photos (
+    exception_id TEXT PRIMARY KEY REFERENCES exception_items(id),
+    mime         TEXT NOT NULL,
+    size         INTEGER NOT NULL,
+    data         BLOB NOT NULL,
+    created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  );
+  `,
 ];
 
 export function openDatabase(path: string): Db {

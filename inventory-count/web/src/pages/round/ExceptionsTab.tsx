@@ -50,6 +50,24 @@ function ExceptionCard({ roundId, item, closed }: { roundId: number; item: Excep
   return (
     <Paper variant="outlined" sx={{ p: 2, borderRadius: 3, bgcolor: pending ? tokens.surface : tokens.canvas }}>
       <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
+        {!!item.hasPhoto && (
+          <Box
+            component="a"
+            href={`/api/rounds/${roundId}/exceptions/${item.id}/photo`}
+            target="_blank"
+            rel="noopener"
+            aria-label={`תמונה מלאה: ${item.description}`}
+            sx={{ flexShrink: 0, display: 'block', width: { xs: '100%', md: 140 }, height: 140, borderRadius: 2, overflow: 'hidden', border: `1px solid ${tokens.line}` }}
+          >
+            <Box
+              component="img"
+              src={`/api/rounds/${roundId}/exceptions/${item.id}/photo`}
+              alt={item.description}
+              loading="lazy"
+              sx={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+            />
+          </Box>
+        )}
         <Box sx={{ flex: 1, minWidth: 0 }}>
           <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 0.5 }}>
             <Typography variant="h4">{item.description}</Typography>

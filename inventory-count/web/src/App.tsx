@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { Box, CircularProgress } from '@mui/material';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Navigate, Route, Routes } from 'react-router-dom';
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { api, type Meta, type User } from './api/client';
 import { AppShell } from './components/AppShell';
 import { LoginPage } from './pages/LoginPage';
@@ -10,10 +10,12 @@ import { RoundsPage } from './pages/RoundsPage';
 import { RoundNewPage } from './pages/RoundNewPage';
 import { RoundPage } from './pages/RoundPage';
 import { UsersPage } from './pages/UsersPage';
+import { PrintReportPage } from './pages/PrintReportPage';
 import { MetaContext } from './hooks';
 
 export function App() {
   const qc = useQueryClient();
+  const location = useLocation();
   const me = useQuery({
     queryKey: ['me'],
     queryFn: () => api.get<{ user: User }>('/api/auth/me').then((r) => r.user),
@@ -43,6 +45,17 @@ export function App() {
 
   const user = me.data;
   if (!user) return <LoginPage />;
+
+  // Printable reports render without the app chrome so the PDF holds only the report.
+  if (user.role === 'manager' && /^\/rounds\/\d+\/print\//.test(location.pathname)) {
+    return (
+      <MetaContext.Provider value={meta.data ?? null}>
+        <Routes>
+          <Route path="/rounds/:id/print/:type" element={<PrintReportPage />} />
+        </Routes>
+      </MetaContext.Provider>
+    );
+  }
 
   return (
     <MetaContext.Provider value={meta.data ?? null}>

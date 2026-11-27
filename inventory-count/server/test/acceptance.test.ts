@@ -261,3 +261,53 @@ describe('review flow and SAP document', () => {
     expect((await alice('POST', '/api/users', { username: 'x', displayName: 'x', role: 'manager', pin: '1234' })).status).toBe(403);
   });
 });
+
+describe('phase B: exception photo and printable reports', () => {
+  // Smallest valid JPEG header + filler: enough for signature validation.
+  const jpeg = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(200, 1), Buffer.from([0xff, 0xd9])]);
+  const exception = (who: ReturnType<typeof call>, extra: object = {}) =>
+    who('POST', `/api/rounds/${roundId}/exceptions`, { id: randomUUID(), description: 'קרטון ללא מדבקה', qty: 2, ...extra });
+
+  it('stores a photo with the exception and serves it to managers only', async () => {
+    const r = await exception(alice, { photo: `data:image/jpeg;base64,${jpeg.toString('base64')}` });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body.hasPhoto).toBe(true);
+
+    const list = (await mgr('GET', `/api/rounds/${roundId}/exceptions`)).body.exceptions;
+    expect(list[0].hasPhoto).toBe(1);
+
+    const img = await mgr('GET', `/api/rounds/${roundId}/exceptions/${r.body.id}/photo`);
+    expect(img.status).toBe(200);
+    expect(Buffer.compare(img.body as Buffer, jpeg)).toBe(0);
+    expect((await alice('GET', `/api/rounds/${roundId}/exceptions/${r.body.id}/photo`)).status).toBe(403);
+  });
+
+  it('rejects files that are not images, and saves nothing', async () => {
+    const id = randomUUID();
+    const bad = await alice('POST', `/api/rounds/${roundId}/exceptions`, {
+      id,
+      description: 'x',
+      qty: 1,
+      photo: Buffer.from('<script>alert(1)</script>').toString('base64'),
+    });
+    expect(bad.status).toBe(400);
+    expect((await mgr('GET', `/api/rounds/${roundId}/exceptions`)).body.exceptions).toHaveLength(0);
+  });
+
+  it('exception without photo still works; photo endpoint says there is none', async () => {
+    const r = await exception(alice);
+    expect(r.body.hasPhoto).toBe(false);
+    expect((await mgr('GET', `/api/rounds/${roundId}/exceptions/${r.body.id}/photo`)).status).toBe(404);
+  });
+
+  it('report data for the printable page matches the Excel source', async () => {
+    await count(alice, '1111', 12);
+    const rep = (await mgr('GET', `/api/rounds/${roundId}/report-data/differences`)).body;
+    expect(rep.title).toBe('דוח הפרשים');
+    expect(rep.round.id).toBe(roundId);
+    const row = rep.sections[0].rows.find((r: { itemCode: string; warehouse: string }) => r.itemCode === '1111' && r.warehouse === '151');
+    expect(row).toMatchObject({ sapQty: 35, finalQty: 12, diff: -23 });
+    expect((await mgr('GET', `/api/rounds/${roundId}/report-data/nope`)).status).toBe(404);
+    expect((await alice('GET', `/api/rounds/${roundId}/report-data/differences`)).status).toBe(403);
+  });
+});

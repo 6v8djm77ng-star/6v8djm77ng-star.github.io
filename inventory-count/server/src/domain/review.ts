@@ -258,12 +258,24 @@ export class ReviewService {
       .prepare(
         `SELECT e.id, e.warehouse, e.code, e.barcode, e.description, e.qty, e.notes, e.review_status AS reviewStatus,
                 e.review_note AS reviewNote, e.created_at AS createdAt, u.display_name AS userName, z.name AS zoneName,
-                ru.display_name AS reviewedBy, e.reviewed_at AS reviewedAt
+                ru.display_name AS reviewedBy, e.reviewed_at AS reviewedAt,
+                EXISTS (SELECT 1 FROM exception_photos p WHERE p.exception_id=e.id) AS hasPhoto
          FROM exception_items e JOIN users u ON u.id=e.user_id LEFT JOIN zones z ON z.id=e.zone_id
          LEFT JOIN users ru ON ru.id=e.reviewed_by
          WHERE e.round_id=? ORDER BY e.review_status DESC, e.created_at DESC`,
       )
       .all(roundId);
+  }
+
+  exceptionPhoto(roundId: number, id: string) {
+    const row = this.db
+      .prepare(
+        `SELECT p.mime, p.data FROM exception_photos p JOIN exception_items e ON e.id=p.exception_id
+         WHERE p.exception_id=? AND e.round_id=?`,
+      )
+      .get(id, roundId) as { mime: string; data: Buffer } | undefined;
+    if (!row) throw new AppError('NOT_FOUND', 'לפריט הזה אין תמונה');
+    return row;
   }
 
   resolveException(actor: User, roundId: number, id: string, note: string) {

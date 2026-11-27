@@ -197,9 +197,22 @@ export interface ExceptionItem {
   userName: string;
   zoneName: string | null;
   reviewedBy: string | null;
+  hasPhoto: number | boolean;
 }
 export interface FreezeCheck {
   checkedAt: string;
   clean: boolean;
   movements: { transNum: number; transType: number; baseRef: string | null; itemCode: string; itemName: string; warehouse: string; qty: number; createdAt: string | null }[];
+}
+
+export interface ReportTable {
+  type: string;
+  title: string;
+  round: { id: number; name: string; warehouses: string[]; snapshotAt: string; status: RoundStatus };
+  generatedAt: string;
+  sections: {
+    name: string;
+    columns: { header: string; key: string; width: number; numeric?: boolean }[];
+    rows: Record<string, string | number | null>[];
+  }[];
 }

@@ -23,6 +23,7 @@ import CheckRounded from '@mui/icons-material/CheckRounded';
 import ReplayRounded from '@mui/icons-material/ReplayRounded';
 import ReportProblemOutlined from '@mui/icons-material/ReportProblemOutlined';
 import Inventory2Outlined from '@mui/icons-material/Inventory2Outlined';
+import PhotoCameraOutlined from '@mui/icons-material/PhotoCameraOutlined';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams, useSearchParams } from 'react-router-dom';
 import {
@@ -41,6 +42,7 @@ import { num, signed, time, TYPE_HE } from '../format';
 import { useDebounced, useOnline, useWarehouseName } from '../hooks';
 import { tokens } from '../theme/theme';
 import { uuid } from '../uuid';
+import { compressPhoto } from '../photo';
 
 interface Ctx {
   roundId: number;
@@ -595,7 +597,24 @@ function ExceptionForm({
     qty: '',
     notes: '',
   });
+  const [photo, setPhoto] = useState<string | null>(null);
+  const [photoBusy, setPhotoBusy] = useState(false);
+  const [photoError, setPhotoError] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
   const id = useRef(uuid());
+  const onPhoto = async (file: File | undefined) => {
+    if (!file) return;
+    setPhotoBusy(true);
+    setPhotoError(null);
+    try {
+      setPhoto(await compressPhoto(file));
+    } catch (e) {
+      setPhotoError(e instanceof Error ? e.message : 'לא הצלחנו לקרוא את התמונה');
+    } finally {
+      setPhotoBusy(false);
+      if (fileRef.current) fileRef.current.value = '';
+    }
+  };
   const save = useMutation({
     mutationFn: () =>
       api.post(`/api/rounds/${ctx.roundId}/exceptions`, {
@@ -605,6 +624,7 @@ function ExceptionForm({
         description: form.description,
         qty: Number(form.qty),
         notes: form.notes || undefined,
+        photo: photo ?? undefined,
         ...(warehouseParam ? { warehouse: warehouseParam } : {}),
       }),
     onSuccess: onDone,
@@ -637,12 +657,52 @@ function ExceptionForm({
           inputProps={{ inputMode: 'numeric', style: { fontSize: '1.4rem', fontWeight: 700 } }}
         />
         <TextField label="הערות" value={form.notes} onChange={set('notes')} multiline minRows={2} />
+        <Box>
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            hidden
+            onChange={(e) => void onPhoto(e.target.files?.[0])}
+          />
+          {photo ? (
+            <Stack direction="row" spacing={2} alignItems="center">
+              <Box
+                component="img"
+                src={photo}
+                alt="תמונת הפריט"
+                sx={{ width: 120, height: 120, objectFit: 'cover', borderRadius: 2, border: `1px solid ${tokens.line}` }}
+              />
+              <Stack spacing={1}>
+                <Button variant="outlined" startIcon={<PhotoCameraOutlined />} onClick={() => fileRef.current?.click()}>
+                  צילום מחדש
+                </Button>
+                <Button onClick={() => setPhoto(null)} sx={{ color: tokens.inkMuted }}>
+                  הסרת התמונה
+                </Button>
+              </Stack>
+            </Stack>
+          ) : (
+            <Button
+              variant="outlined"
+              size="large"
+              startIcon={photoBusy ? <CircularProgress size={18} /> : <PhotoCameraOutlined />}
+              onClick={() => fileRef.current?.click()}
+              disabled={photoBusy}
+              fullWidth
+            >
+              {photoBusy ? 'מעבד תמונה…' : 'צילום הפריט או האריזה'}
+            </Button>
+          )}
+          {photoError && <Alert severity="error" sx={{ mt: 1 }}>{photoError}</Alert>}
+        </Box>
         {save.error && <Alert severity="error">{save.error instanceof ApiError ? save.error.message : 'השמירה נכשלה'}</Alert>}
         <Stack direction={{ xs: 'column-reverse', sm: 'row' }} spacing={1.5}>
           <Button size="large" onClick={onDone} sx={{ flex: 1 }}>
             ביטול
           </Button>
-          <Button type="submit" size="large" variant="contained" disabled={!valid || !online || save.isPending} sx={{ flex: 2 }}>
+          <Button type="submit" size="large" variant="contained" disabled={!valid || !online || save.isPending || photoBusy} sx={{ flex: 2 }}>
             {save.isPending ? 'שומר…' : 'שמירת פריט חריג'}
           </Button>
         </Stack>

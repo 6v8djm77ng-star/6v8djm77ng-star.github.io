@@ -1,6 +1,7 @@
 import type { Db } from '../db/database.js';
 import { audit } from '../db/database.js';
 import { AppError } from './errors.js';
+import { decodePhoto } from './photos.js';
 import type { RoundService, RoundStatus } from './rounds.js';
 import type { User } from './users.js';
 
@@ -280,7 +281,16 @@ export class CountingService {
   reportException(
     user: User,
     roundId: number,
-    input: { id: string; warehouse?: string; code?: string; barcode?: string; description: string; qty: number; notes?: string },
+    input: {
+      id: string;
+      warehouse?: string;
+      code?: string;
+      barcode?: string;
+      description: string;
+      qty: number;
+      notes?: string;
+      photo?: string;
+    },
   ) {
     if (!UUID.test(input.id)) throw new AppError('VALIDATION', 'מזהה פעולה לא תקין');
     const existing = this.db.prepare('SELECT id, user_id FROM exception_items WHERE id=?').get(input.id) as
@@ -295,24 +305,33 @@ export class CountingService {
     if (!input.description?.trim()) throw new AppError('VALIDATION', 'חובה לתאר את הפריט');
     const qty = Number(input.qty);
     if (!Number.isInteger(qty) || qty <= 0 || qty > MAX_QTY) throw new AppError('VALIDATION', 'כמות לא תקינה');
-    this.db
-      .prepare(
-        `INSERT INTO exception_items (id, round_id, warehouse, zone_id, user_id, code, barcode, description, qty, notes)
-         VALUES (?,?,?,?,?,?,?,?,?,?)`,
-      )
-      .run(
-        input.id,
-        roundId,
-        ctx.warehouse,
-        ctx.zoneId,
-        user.id,
-        input.code?.trim() || null,
-        input.barcode?.trim() || null,
-        input.description.trim(),
-        qty,
-        input.notes?.trim() || null,
-      );
-    return { id: input.id, duplicate: false };
+    // Validate the photo before writing anything, so a bad image never leaves a half-saved item.
+    const photo = input.photo ? decodePhoto(input.photo) : null;
+    this.db.transaction(() => {
+      this.db
+        .prepare(
+          `INSERT INTO exception_items (id, round_id, warehouse, zone_id, user_id, code, barcode, description, qty, notes)
+           VALUES (?,?,?,?,?,?,?,?,?,?)`,
+        )
+        .run(
+          input.id,
+          roundId,
+          ctx.warehouse,
+          ctx.zoneId,
+          user.id,
+          input.code?.trim() || null,
+          input.barcode?.trim() || null,
+          input.description.trim(),
+          qty,
+          input.notes?.trim() || null,
+        );
+      if (photo) {
+        this.db
+          .prepare('INSERT INTO exception_photos (exception_id, mime, size, data) VALUES (?,?,?,?)')
+          .run(input.id, photo.mime, photo.data.length, photo.data);
+      }
+    })();
+    return { id: input.id, duplicate: false, hasPhoto: !!photo };
   }
 }
 

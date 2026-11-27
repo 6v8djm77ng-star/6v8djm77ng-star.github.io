@@ -15,6 +15,7 @@ import {
   Typography,
 } from '@mui/material';
 import FileDownloadOutlined from '@mui/icons-material/FileDownloadOutlined';
+import PictureAsPdfOutlined from '@mui/icons-material/PictureAsPdfOutlined';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError, type FreezeCheck, type Round } from '../../api/client';
 import { dateTime, num, signed } from '../../format';
@@ -221,21 +222,40 @@ function SendToSap({ round }: { round: Round }) {
 function Reports({ roundId }: { roundId: number }) {
   const meta = useMeta();
   return (
-    <Section title="דוחות Excel">
+    <Section title="דוחות">
       <Box component="ul" sx={{ listStyle: 'none', m: 0, p: 0 }}>
         {Object.entries(meta?.reports ?? {}).map(([key, label]) => (
-          <Box component="li" key={key} sx={{ borderBottom: `1px solid ${tokens.line}`, '&:last-child': { borderBottom: 0 } }}>
+          <Stack
+            component="li"
+            key={key}
+            direction="row"
+            alignItems="center"
+            spacing={1}
+            sx={{ px: 2, py: 1, borderBottom: `1px solid ${tokens.line}`, '&:last-child': { borderBottom: 0 } }}
+          >
+            <Typography sx={{ flex: 1, fontWeight: 500 }}>{label}</Typography>
             <Button
+              size="small"
               component="a"
               href={`/api/rounds/${roundId}/reports/${key}`}
               download
-              fullWidth
               startIcon={<FileDownloadOutlined />}
-              sx={{ justifyContent: 'flex-start', px: 2, py: 1.25, borderRadius: 0, color: 'text.primary', fontWeight: 500 }}
+              aria-label={`${label} – Excel`}
             >
-              {label}
+              Excel
             </Button>
-          </Box>
+            <Button
+              size="small"
+              component="a"
+              href={`/rounds/${roundId}/print/${key}`}
+              target="_blank"
+              rel="noopener"
+              startIcon={<PictureAsPdfOutlined />}
+              aria-label={`${label} – PDF`}
+            >
+              PDF
+            </Button>
+          </Stack>
         ))}
       </Box>
     </Section>

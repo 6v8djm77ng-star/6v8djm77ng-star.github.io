@@ -147,7 +147,8 @@ export async function buildApp(opts: {
     const body = z.object({ reason: z.string().min(1).max(500) }).parse(req.body);
     return s.counting.cancel(u(req), actionId, body.reason);
   });
-  app.post('/api/rounds/:id/exceptions', anyUser, async (req) => {
+  // Larger body limit only here: the optional photo is sent inline (compressed on the device, max 3MB decoded).
+  app.post('/api/rounds/:id/exceptions', { ...anyUser, bodyLimit: 5 * 1024 * 1024 }, async (req) => {
     const body = z
       .object({
         id: z.string().uuid(),
@@ -157,6 +158,7 @@ export async function buildApp(opts: {
         description: z.string().min(1).max(300),
         qty: z.number(),
         notes: z.string().max(500).optional(),
+        photo: z.string().max(4_500_000).optional(),
       })
       .parse(req.body);
     return s.counting.reportException(u(req), roundId(req), body);
@@ -238,9 +240,18 @@ export async function buildApp(opts: {
     return s.review.revokeApproval(u(req), roundId(req), body.warehouse, body.itemCode);
   });
   app.get('/api/rounds/:id/exceptions', manager, async (req) => ({ exceptions: s.review.exceptions(roundId(req)) }));
+  app.get('/api/rounds/:id/exceptions/:exId/photo', manager, async (req, reply: FastifyReply) => {
+    const photo = s.review.exceptionPhoto(roundId(req), (req.params as { exId: string }).exId);
+    reply.header('Content-Type', photo.mime).header('Cache-Control', 'private, max-age=3600');
+    reply.header('Content-Security-Policy', "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'");
+    return reply.send(photo.data);
+  });
   app.post('/api/rounds/:id/exceptions/:exId/resolve', manager, async (req) => {
     const body = z.object({ note: z.string().min(1).max(500) }).parse(req.body);
     return s.review.resolveException(u(req), roundId(req), (req.params as { exId: string }).exId, body.note);
+  });
+  app.get('/api/rounds/:id/report-data/:type', manager, async (req) => {
+    return s.reports.table(roundId(req), (req.params as { type: string }).type as ReportType);
   });
   app.get('/api/rounds/:id/reports/:type', manager, async (req, reply: FastifyReply) => {
     const type = (req.params as { type: string }).type as ReportType;
