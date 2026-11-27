@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\SegmentHub.Domain\SegmentHub.Domain.csproj" />
+    <ProjectReference Include="..\SegmentHub.Application\SegmentHub.Application.csproj" />
+  </ItemGroup>
+</Project>
