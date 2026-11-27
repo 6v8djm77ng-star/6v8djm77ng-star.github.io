@@ -27,8 +27,8 @@ decode → parse → validate(SAP) → map → post(SAP)
                       │                    │
                       └── rejection        └── בשדו: לא נכתב כלום
 ```
-- **decode** — לפי קידוד שמוגדר per‑interface (Orders=Windows‑1255, SupplyApprovals=UTF‑8).
-- **parse** — מבנה הקובץ חי רק במודול. קלט שגוי מחזיר rejection, לא exception.
+- **decode** — Windows‑1255 לכל הממשקים הנכנסים (Orders ו‑SupplyApprovals), בדיוק כמו ה‑CsvReader של EasySale.
+- **parse** — מבנה הקובץ חי רק במודול. **מיפוי העמודות אומת מול הקוד המפורק של EasySale** (`ESG_SegmentFiles_API`), לא מנוחש. קלט שגוי מחזיר rejection, לא exception.
 - **validate** — מול מצב SAP אמיתי. כאן נחסם הכשל הכרוני ("אין ת. משלוח מקושרת") עם קוד וסיבה.
 - **map** — בניית טיוטת מסמך SAP.
 - **post** — רק במצב חי. במצב צל מדולג, והתוצאה נרשמת להשוואה.
@@ -54,12 +54,19 @@ decode → parse → validate(SAP) → map → post(SAP)
 | עמידות | אין נעילת קבצים; מחזור polling מבודד per‑module עם back‑off |
 
 ## ממשקים (מפת דרכים)
-ממומש: **SupplyApprovals** (אישור אספקה → חשבונית), כמודול ייחוס במצב צל.
-ממתינים כמודולים: Orders, DeliveryNotes, HundredFile(קובץ 100), PDF/POD, StockLevels, OrderStatus, Returns.
+**נכנסים (import):**
+- **SupplyApprovals** (ממשק 11, אישור אספקה → חשבונית) — מיפוי אומת מול EasySale; מוכח end‑to‑end במצב צל מול SAP.
+- **Orders** (ממשק 1, הזמנה → הזמנת מכר) — מיפוי אומת מול EasySale ומול שורת פרודקשן אמיתית.
+
+**יוצאים (export):**
+- **HundredFile** (ממשק 7, קובץ 100) — outbound, מוקשח (סכומים שליליים/חריגה נחסמים).
+- **DeliveryNotes** (ממשק 9) — EasySale **מייצא** תעודות משלוח (SAP→קובץ), לא מייבא סטטוס. המודול הנכנס שנבנה היה בכיוון הפוך ו**הושבת** (`Enabled:false`) עד שתואם הדרישה האמיתית. צריך להיבנות מחדש כמודול ייצוא.
+
+ממתינים: POD/Cheetah (ממשק 12, חסום בטוקן), StockLevels, Returns.
 
 ## מה עדיין פתוח (לפני חי)
-1. אימות שמות שדות ב‑Service Layer מול המטא‑דאטה החי (DeliveryNotes/Invoices).
-2. מפת branch→fatherCard מלאה מ‑`@ESG_CONF` ב‑220.
-3. התקנת תהליך שמעתיק קבצים נכנסים ל‑`_HubInbox` (או חיבור SFTP ישיר במקום EasySale).
-4. מיגרציית טבלת `HubProcessingLog`.
-5. משתמש SAP ייעודי ל‑hub + הרשאות.
+1. שם ה‑company DB של הפרודקשן ל‑shadow אמיתי (נבדק מול TEST_OIG בלבד עד כה).
+2. אימות שמות שדות ב‑Service Layer מול המטא‑דאטה החי (SegmentHub מדבר SL; EasySale השתמשה ב‑DI API/SQL, אז שמות השדות הם תכנון שלנו).
+3. התקנת תהליך שמעתיק קבצים נכנסים ל‑`_HubInbox`.
+4. מיגרציית טבלת `HubProcessingLog` + משתמש SAP ייעודי (SEGHUB) במקום לוגין אישי.
+5. בנייה מחדש של DeliveryNotes כמודול ייצוא, אם ממשק 9 בתחום.
