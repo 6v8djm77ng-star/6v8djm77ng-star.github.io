@@ -1,5 +1,6 @@
 using SegmentHub.Domain.Enums;
 using SegmentHub.Modules.Orders.Parsing;
+using Xunit;
 
 namespace SegmentHub.Tests.Orders;
 
