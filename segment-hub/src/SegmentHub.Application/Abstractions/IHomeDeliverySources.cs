@@ -10,13 +10,13 @@ public interface IHomeDeliveryReadModel
 }
 
 /// <summary>
-/// Cheetah receipt dates per source order, produced daily by the existing "Cheetah Daily" job
-/// (chita-receipt-dates.json). Reused as-is — no direct Cheetah API call from the hub.
+/// Cheetah statuses of Segment home deliveries, as already tracked by oig-electra-worker
+/// (state\prod-status.json). Reused as-is — the hub never calls Cheetah itself.
 /// </summary>
-public interface IChitaReceiptDatesSource
+public interface IChitaStatusSource
 {
-    /// <summary>Returns null when the file is missing or unreadable — the caller must treat that as a fault, not as "no deliveries".</summary>
-    Task<ChitaReceiptDates?> LoadAsync(CancellationToken ct);
+    /// <summary>Null when the file is missing or unreadable — the caller must treat that as a fault, not as "nothing delivered".</summary>
+    Task<ChitaStatusSnapshot?> LoadAsync(CancellationToken ct);
 }
 
 /// <summary>Settings for the home-delivery invoicing flow (section Hub:HomeDelivery).</summary>
@@ -27,17 +27,17 @@ public sealed class HomeDeliverySettings
     /// <summary>Segment father cards whose delivery notes are considered.</summary>
     public List<string> FatherCards { get; set; } = ["2005000", "2004999", "2005207"];
 
-    /// <summary>Set via env Hub__HomeDelivery__ChitaDatesPath (internal share path — not committed).</summary>
-    public string ChitaDatesPath { get; set; } = "";
+    /// <summary>electra-worker's state\prod-status.json. Set per machine (not committed).</summary>
+    public string StatusFilePath { get; set; } = "";
 
-    /// <summary>Company key inside the receipt-dates file ("OIG" / "UNICO").</summary>
-    public string ChitaCompany { get; set; } = "OIG";
+    public string DeliveredStatus { get; set; } = "Delivered";
+    public List<string> RefusedStatuses { get; set; } = ["Refuse"];
 
-    public int LookbackDays { get; set; } = 45;
+    public int LookbackDays { get; set; } = 60;
 
-    /// <summary>Delivered by Cheetah but still unsigned after this many days → alert.</summary>
-    public int UnsignedAlertDays { get; set; } = 3;
+    /// <summary>No status change for this long while shipments are still in transit → the Cheetah link is down.</summary>
+    public int StaleStatusHours { get; set; } = 24;
 
-    /// <summary>Receipt-dates file older than this → alert (Cheetah Daily stopped).</summary>
-    public int StaleDatesHours { get; set; } = 36;
+    /// <summary>In transit longer than this → alert.</summary>
+    public int InTransitAlertDays { get; set; } = 7;
 }

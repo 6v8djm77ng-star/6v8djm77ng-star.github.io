@@ -73,31 +73,23 @@ decode → parse → validate(SAP) → map → post(SAP)
 
 ## Home-delivery invoicing (בית לקוח, Cheetah) — `SegmentHub.Modules.HomeDelivery`
 
-**Status: DISABLED (2026-11-28).** Read-only checks on SAP: none of 919 Segment orders in the last 90 days
-appear in the Cheetah receipt file, and father card 2004999 orders are already invoiced (127/128) by the
-existing flow. Kept, tested and switched off in case Segment home deliveries move to Cheetah.
+**Why:** read-only SAP checks (28.11.2026) show every Segment home-delivery invoice in the last 90 days
+was created by hand (48/48, none via a supply approval), so EasySale — and the SupplyApprovals module —
+never cover them. A forgotten delivery stays un-billed for weeks (two such DNs were open 30+ days).
 
-Outbound module `HomeDeliveryInvoicing`, runs daily at 19:00 (after Chita-POD-to-SAP at 18:00).
-Reuses existing signals; no direct Cheetah API:
+**Delivery signal:** reused from `oig-electra-worker` (`state\prod-status.json`, keyed by Electra order
+ref = DN.NumAtCard, with Status / Terminal / DeliveryNote / UpdatedUtc). The hub never calls Cheetah.
 
-| signal | source |
-|---|---|
-| delivered + receipt date | `chita-receipt-dates.json` (Cheetah Daily job), keyed by source sales-order DocNum |
-| signed POD | SAP attachment on the DN whose file name contains "חתימה" |
-| not yet invoiced | DLN1 open lines > 0 |
-| no double-billing | source order not invoiced directly (INV1 BaseType 17) |
+Rules (`HomeDeliveryEligibility`, pure, every doubt blocks): not in the status file → branch delivery ·
+status points to another DN → alert, never bill · Refuse → alert, never bill · consignment / no open
+lines / order invoiced directly → skip · not Delivered → in transit (alert after `InTransitAlertDays`) ·
+Delivered → invoice all open DN lines, dated on the local day Cheetah confirmed (never before the DN date).
 
-Rules (`HomeDeliveryEligibility`, pure, every doubt blocks): not in the Cheetah map → branch delivery
-(supply-approval flow) · consignment → skip · no open lines → skip · order invoiced directly → skip ·
-unsigned → wait, alert after `UnsignedAlertDays` · else invoice all open DN lines, dated on the receipt
-date (never before the DN date).
+Faults: missing/unreadable status file (never "nothing delivered"); no status change for
+`StaleStatusHours` while shipments are in transit (= Cheetah link down; the worker got 401s from 26.11.2026);
+refused / key mismatch / long in transit; failed invoice post (per DN, does not block others).
 
-Shadow: CSV decision report in `shadow-out\HomeDeliveryInvoicing\<date>\` — nothing is created in SAP.
-Faults: missing/unreadable receipt file (never treated as "no deliveries"), file older than
-`StaleDatesHours`, unsigned too long, failed invoice post (per DN, does not block others).
-
-Deploy settings (env vars, not committed): `Hub__HomeDelivery__ChitaDatesPath`,
-`ConnectionStrings__SapRead` (SQL read login, read-only).
-
-Before going live: confirm the OIG auto-invoice app (currently disabled) and `oig-electra-worker`
-do not invoice the same Segment DNs.
+**Status: disabled by default.** Enable in shadow where the status file is readable (the VM), with
+`Hub__HomeDelivery__StatusFilePath`, `ConnectionStrings__SapRead`, and compare the CSV report with the
+manual invoices before going live. Then the manual process must stop, or invoices will be duplicated
+(the open-lines guard blocks a second invoice only if the manual one was drawn from the DN).

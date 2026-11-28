@@ -12,55 +12,77 @@ namespace SegmentHub.Tests.HomeDelivery;
 public class HomeDeliveryEligibilityTests
 {
     private static readonly DateOnly DnDate = new(2026, 11, 20);
+    private static readonly string[] Refused = ["Refuse"];
 
-    private static HomeDeliveryCandidate C(bool signed = true, int open = 2, bool direct = false, string? comments = null) => new()
+    private static HomeDeliveryCandidate C(int open = 2, bool direct = false, string? comments = null) => new()
     {
-        DnDocEntry = 1, DnDocNum = 5001, DnDate = DnDate, CardCode = "C1", SourceOrderDocNum = 7001,
-        HasChitaSignature = signed, OpenLinesCount = open, SourceOrderInvoicedDirectly = direct, Comments = comments
+        DnDocEntry = 1, DnDocNum = 5001, DnDate = DnDate, CardCode = "C1", NumAtCard = "999000001",
+        OpenLinesCount = open, SourceOrderInvoicedDirectly = direct, Comments = comments
     };
 
+    private static ChitaShipmentStatus S(string status = "Delivered", int dn = 5001, string updated = "2026-11-23T21:30:00Z") =>
+        new("999000001", status, status is "Delivered" or "Refuse", dn, DateTimeOffset.Parse(updated));
+
+    private static HomeDeliveryVerdict D(HomeDeliveryCandidate c, ChitaShipmentStatus? s, TimeZoneInfo? z = null) =>
+        HomeDeliveryEligibility.Decide(c, s, "Delivered", Refused, z ?? TimeZoneInfo.Utc);
+
     [Fact]
-    public void Delivered_and_signed_is_invoiced_on_the_receipt_date()
+    public void Delivered_is_invoiced_on_the_local_delivery_day()
     {
-        var v = HomeDeliveryEligibility.Decide(C(), new DateOnly(2026, 11, 23));
+        var israelLike = TimeZoneInfo.CreateCustomTimeZone("IL", TimeSpan.FromHours(2), "IL", "IL");
+        var v = D(C(), S(), israelLike); // 21:30Z = 23:30 local, still the 23rd
         Assert.Equal(HomeDeliveryDecision.Invoice, v.Decision);
         Assert.Equal(new DateOnly(2026, 11, 23), v.InvoiceDate);
+        Assert.Equal(new DateOnly(2026, 11, 24), D(C(), S(updated: "2026-11-23T22:30:00Z"), israelLike).InvoiceDate);
     }
 
     [Fact]
     public void Invoice_is_never_dated_before_the_delivery_note()
-        => Assert.Equal(DnDate, HomeDeliveryEligibility.Decide(C(), DnDate.AddDays(-3)).InvoiceDate);
+        => Assert.Equal(DnDate, D(C(), S(updated: "2026-11-10T10:00:00Z")).InvoiceDate);
+
+    [Fact]
+    public void Status_pointing_to_another_delivery_note_is_never_billed()
+        => Assert.Equal(HomeDeliveryDecision.KeyMismatch, D(C(), S(dn: 7777)).Decision);
+
+    [Fact]
+    public void Status_may_reference_the_doc_entry_instead_of_doc_num()
+        => Assert.Equal(HomeDeliveryDecision.Invoice, D(C(), S(dn: 1)).Decision);
 
     [Theory]
-    [InlineData(false, 2, false, null, HomeDeliveryDecision.AwaitingSignature)]
-    [InlineData(true, 0, false, null, HomeDeliveryDecision.AlreadyInvoiced)]
-    [InlineData(true, 2, true, null, HomeDeliveryDecision.OrderInvoicedDirectly)]
-    [InlineData(true, 2, false, "משלוח קונסיגנציה", HomeDeliveryDecision.Consignment)]
-    public void Every_doubt_blocks_the_invoice(bool signed, int open, bool direct, string? comments, HomeDeliveryDecision expected)
+    [InlineData("Refuse", 2, false, null, HomeDeliveryDecision.Refused)]
+    [InlineData("Onitsway", 2, false, null, HomeDeliveryDecision.InTransit)]
+    [InlineData("Collected", 2, false, null, HomeDeliveryDecision.InTransit)]
+    [InlineData("Delivered", 0, false, null, HomeDeliveryDecision.AlreadyInvoiced)]
+    [InlineData("Delivered", 2, true, null, HomeDeliveryDecision.OrderInvoicedDirectly)]
+    [InlineData("Delivered", 2, false, "משלוח קונסיגנציה", HomeDeliveryDecision.Consignment)]
+    public void Every_doubt_blocks_the_invoice(string status, int open, bool direct, string? comments, HomeDeliveryDecision expected)
     {
-        var v = HomeDeliveryEligibility.Decide(C(signed, open, direct, comments), new DateOnly(2026, 11, 23));
+        var v = D(C(open, direct, comments), S(status));
         Assert.Equal(expected, v.Decision);
         Assert.Null(v.InvoiceDate);
     }
 
     [Fact]
-    public void Not_in_cheetah_map_is_a_branch_delivery()
-        => Assert.Equal(HomeDeliveryDecision.NotCheetah, HomeDeliveryEligibility.Decide(C(), null).Decision);
+    public void Not_tracked_by_cheetah_is_a_branch_delivery()
+        => Assert.Equal(HomeDeliveryDecision.NotCheetah, D(C(), null).Decision);
 }
 
-public class ChitaReceiptDatesTests
+public class ChitaStatusSnapshotTests
 {
     [Fact]
-    public void Parses_company_map_and_drops_malformed_entries()
+    public void Parses_entries_and_drops_malformed_ones()
     {
-        var d = ChitaReceiptDates.Parse(
-            """{"OIG":{"7001":"2026-11-23","bad":"2026-11-23","7002":"23/11/2026"},"UNICO":{"9":"2026-11-01"}}""",
-            DateTimeOffset.UtcNow);
-        Assert.Equal(new DateOnly(2026, 11, 23), d.ReceiptDate("OIG", 7001));
-        Assert.Null(d.ReceiptDate("OIG", 7002));
-        Assert.Null(d.ReceiptDate("OIG", 9));
-        Assert.Equal(new DateOnly(2026, 11, 1), d.ReceiptDate("unico", 9));
-        Assert.Equal(2, d.SkippedEntries);
+        var s = ChitaStatusSnapshot.Parse("""
+            {"999000001":{"Status":"Delivered","Terminal":true,"DeliveryNote":5001,"UpdatedUtc":"2026-11-26T09:59:39.9993899Z"},
+             "999000002":{"Status":"Onitsway","Terminal":false,"DeliveryNote":"x","UpdatedUtc":"2026-11-26T09:59:39Z"},
+             "999000003":"garbage"}
+            """, DateTimeOffset.UtcNow);
+        var d = s.ForOrder(" 999000001 ");
+        Assert.NotNull(d);
+        Assert.Equal(5001, d!.DeliveryNote);
+        Assert.True(d.Terminal);
+        Assert.Null(s.ForOrder("999000002"));
+        Assert.Equal(2, s.SkippedEntries);
     }
 }
 
@@ -79,9 +101,9 @@ public class HomeDeliveryInvoicingModuleTests
             => Task.FromResult<IReadOnlyList<HomeDeliveryCandidate>>(Items);
     }
 
-    private sealed class FakeDates(ChitaReceiptDates? d) : IChitaReceiptDatesSource
+    private sealed class FakeStatuses(ChitaStatusSnapshot? s) : IChitaStatusSource
     {
-        public Task<ChitaReceiptDates?> LoadAsync(CancellationToken ct) => Task.FromResult(d);
+        public Task<ChitaStatusSnapshot?> LoadAsync(CancellationToken ct) => Task.FromResult(s);
     }
 
     private sealed class FakePublisher : IFilePublisher
@@ -96,38 +118,49 @@ public class HomeDeliveryInvoicingModuleTests
     private readonly FakeReadModel _rm = new();
     private readonly FakePublisher _pub = new();
 
-    private static ChitaReceiptDates Dates(string json, DateTimeOffset? written = null) =>
-        ChitaReceiptDates.Parse(json, written ?? Now.AddHours(-2));
+    private static string E(int dn, string status, string updated = "2026-11-28T10:00:00Z") =>
+        $$"""
+        "99900000{{dn}}":{"Status":"{{status}}","Terminal":{{(status is "Delivered" or "Refuse" ? "true" : "false")}},"DeliveryNote":{{5000 + dn}},"UpdatedUtc":"{{updated}}"}
+        """;
 
-    private HomeDeliveryInvoicingModule Sut(ChitaReceiptDates? dates) =>
-        new(_sap, _rm, new FakeDates(dates), _pub, new HomeDeliverySettings(),
+    private static ChitaStatusSnapshot Snap(params string[] entries) =>
+        ChitaStatusSnapshot.Parse("{" + string.Join(",", entries) + "}", Now.AddHours(-1));
+
+    private HomeDeliveryInvoicingModule Sut(ChitaStatusSnapshot? s) =>
+        new(_sap, _rm, new FakeStatuses(s), _pub, new HomeDeliverySettings(),
             NullLogger<HomeDeliveryInvoicingModule>.Instance, new FixedClock(Now));
 
-    private static HomeDeliveryCandidate C(int dn, int order, bool signed = true) => new()
+    private static HomeDeliveryCandidate C(int dn, DateOnly? date = null) => new()
     {
-        DnDocEntry = dn, DnDocNum = 5000 + dn, DnDate = new DateOnly(2026, 11, 25), CardCode = "C1",
-        SourceOrderDocNum = order, HasChitaSignature = signed, OpenLinesCount = 1, SourceOrderInvoicedDirectly = false
+        DnDocEntry = dn, DnDocNum = 5000 + dn, DnDate = date ?? new DateOnly(2026, 11, 25), CardCode = "C1",
+        NumAtCard = $"99900000{dn}", OpenLinesCount = 1, SourceOrderInvoicedDirectly = false
+    };
+
+    private static HomeDeliveryCandidate Branch() => new()
+    {
+        DnDocEntry = 9, DnDocNum = 6009, DnDate = new DateOnly(2026, 11, 25), CardCode = "C9",
+        NumAtCard = "103000009", OpenLinesCount = 1, SourceOrderInvoicedDirectly = false
     };
 
     [Fact]
     public async Task Shadow_reports_decisions_and_creates_nothing()
     {
-        _rm.Items.AddRange([C(1, 7001), C(2, 7002, signed: false), C(3, 9999)]);
-        var r = await Sut(Dates("""{"OIG":{"7001":"2026-11-27","7002":"2026-11-27"}}""")).GenerateOutboundAsync(true, default);
+        _rm.Items.AddRange([C(1), C(2), Branch()]);
+        var r = await Sut(Snap(E(1, "Delivered"), E(2, "Onitsway"))).GenerateOutboundAsync(true, default);
 
         Assert.Equal(ProcessingStatus.Succeeded, r.Status);
         Assert.Empty(_sap.CreatedInvoices);
         var csv = System.Text.Encoding.UTF8.GetString(Assert.Single(_pub.Shadow).Content);
         Assert.Contains("5001,", csv);
-        Assert.Contains("AwaitingSignature", csv);
-        Assert.DoesNotContain("5003,", csv); // branch delivery not in the report
+        Assert.Contains("InTransit", csv);
+        Assert.DoesNotContain("6009,", csv); // branch delivery not in the report
     }
 
     [Fact]
-    public async Task Live_invoices_only_signed_cheetah_deliveries_on_receipt_date()
+    public async Task Live_invoices_only_delivered_shipments_on_the_delivery_day()
     {
-        _rm.Items.AddRange([C(1, 7001), C(2, 7002, signed: false), C(3, 9999)]);
-        var r = await Sut(Dates("""{"OIG":{"7001":"2026-11-27","7002":"2026-11-27"}}""")).GenerateOutboundAsync(false, default);
+        _rm.Items.AddRange([C(1), C(2), Branch()]);
+        var r = await Sut(Snap(E(1, "Delivered", "2026-11-27T08:00:00Z"), E(2, "Collected"))).GenerateOutboundAsync(false, default);
 
         Assert.Equal(ProcessingStatus.Succeeded, r.Status);
         var inv = Assert.Single(_sap.CreatedInvoices);
@@ -137,30 +170,43 @@ public class HomeDeliveryInvoicingModuleTests
     }
 
     [Fact]
-    public async Task Missing_receipt_file_is_a_fault_not_an_empty_run()
+    public async Task Missing_status_file_is_a_fault_not_an_empty_run()
     {
-        _rm.Items.Add(C(1, 7001));
+        _rm.Items.Add(C(1));
         var r = await Sut(null).GenerateOutboundAsync(false, default);
         Assert.Equal(ProcessingStatus.Faulted, r.Status);
         Assert.Empty(_sap.CreatedInvoices);
     }
 
     [Fact]
-    public async Task Long_unsigned_delivery_and_stale_receipt_file_raise_alerts()
+    public async Task Frozen_statuses_while_shipments_are_moving_raise_an_alert()
     {
-        _rm.Items.Add(C(2, 7002, signed: false));
-        var r = await Sut(Dates("""{"OIG":{"7002":"2026-11-20"}}""", Now.AddDays(-3))).GenerateOutboundAsync(true, default);
+        // Exactly the 26.11.2026 situation: Cheetah lookups return 401, nothing updates for days.
+        _rm.Items.Add(C(1));
+        var r = await Sut(Snap(E(1, "Delivered", "2026-11-26T09:59:00Z"), E(2, "Onitsway", "2026-11-26T09:59:00Z")))
+            .GenerateOutboundAsync(true, default);
         Assert.Equal(ProcessingStatus.Faulted, r.Status);
-        Assert.Contains("חתימה", r.FaultDetail);
-        Assert.Contains("Cheetah Daily", r.FaultDetail);
+        Assert.Contains("ציטה", r.FaultDetail);
+    }
+
+    [Fact]
+    public async Task Refused_and_long_in_transit_deliveries_are_alerted_not_billed()
+    {
+        _rm.Items.AddRange([C(1), C(2, new DateOnly(2026, 11, 10))]);
+        var r = await Sut(Snap(E(1, "Refuse"), E(2, "Onitsway"))).GenerateOutboundAsync(false, default);
+
+        Assert.Equal(ProcessingStatus.Faulted, r.Status);
+        Assert.Contains("5001", r.FaultDetail);
+        Assert.Contains("5002", r.FaultDetail);
+        Assert.Empty(_sap.CreatedInvoices);
     }
 
     [Fact]
     public async Task One_failed_invoice_does_not_block_the_others()
     {
-        _rm.Items.AddRange([C(1, 7001), C(2, 7002)]);
+        _rm.Items.AddRange([C(1), C(2)]);
         _sap.FailInvoice = d => d.BaseDeliveryNoteDocEntry == 1 ? new InvalidOperationException("period locked") : null;
-        var r = await Sut(Dates("""{"OIG":{"7001":"2026-11-27","7002":"2026-11-27"}}""")).GenerateOutboundAsync(false, default);
+        var r = await Sut(Snap(E(1, "Delivered"), E(2, "Delivered"))).GenerateOutboundAsync(false, default);
 
         Assert.Equal(ProcessingStatus.Faulted, r.Status);
         Assert.Contains("5001", r.FaultDetail);

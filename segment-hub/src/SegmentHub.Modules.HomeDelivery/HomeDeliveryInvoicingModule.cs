@@ -7,12 +7,11 @@ using SegmentHub.Domain.Model;
 namespace SegmentHub.Modules.HomeDelivery;
 
 /// <summary>
-/// Invoices Segment home deliveries (בית לקוח) once Cheetah delivered them and the signed POD is in SAP.
-/// Signals are reused from the existing jobs — no new Cheetah integration:
-///   • receipt date  ← chita-receipt-dates.json (Cheetah Daily, 08:30)
-///   • signed POD    ← SAP attachment "חתימה" (Chita-POD-to-SAP, 18:00)
+/// Invoices Segment home deliveries (בית לקוח) once Cheetah reports them Delivered. Today this is done by hand
+/// (no supply approval exists for these), so a forgotten delivery stays un-billed for weeks.
+/// The delivery signal is reused from oig-electra-worker (state\prod-status.json) — no new Cheetah integration.
 /// Shadow: writes a decision report (CSV) to the shadow folder and creates nothing.
-/// Live: one A/R invoice per DN from its open lines, dated on the Cheetah receipt date.
+/// Live: one A/R invoice per DN from its open lines, dated on the day Cheetah confirmed delivery.
 /// Idempotent by construction: an invoiced DN has no open lines, so the next run skips it.
 /// </summary>
 public sealed class HomeDeliveryInvoicingModule : IOutboundModule
@@ -21,7 +20,7 @@ public sealed class HomeDeliveryInvoicingModule : IOutboundModule
 
     private readonly ISapGateway _sap;
     private readonly IHomeDeliveryReadModel _readModel;
-    private readonly IChitaReceiptDatesSource _dates;
+    private readonly IChitaStatusSource _statuses;
     private readonly IFilePublisher _publisher;
     private readonly HomeDeliverySettings _settings;
     private readonly ILogger<HomeDeliveryInvoicingModule> _log;
@@ -30,7 +29,7 @@ public sealed class HomeDeliveryInvoicingModule : IOutboundModule
     public HomeDeliveryInvoicingModule(
         ISapGateway sap,
         IHomeDeliveryReadModel readModel,
-        IChitaReceiptDatesSource dates,
+        IChitaStatusSource statuses,
         IFilePublisher publisher,
         HomeDeliverySettings settings,
         ILogger<HomeDeliveryInvoicingModule> log,
@@ -38,7 +37,7 @@ public sealed class HomeDeliveryInvoicingModule : IOutboundModule
     {
         _sap = sap;
         _readModel = readModel;
-        _dates = dates;
+        _statuses = statuses;
         _publisher = publisher;
         _settings = settings;
         _log = log;
@@ -55,27 +54,33 @@ public sealed class HomeDeliveryInvoicingModule : IOutboundModule
         var runName = $"home_delivery_{today:yyyyMMdd}";
         try
         {
-            var dates = await _dates.LoadAsync(ct);
-            if (dates is null)
+            var snapshot = await _statuses.LoadAsync(ct);
+            if (snapshot is null)
                 return ProcessingResult.Fault(runName,
-                    $"קובץ תאריכי קבלה של ציטה לא נמצא/לא קריא ({_settings.ChitaDatesPath}) — לא מחייבים בלי הוכחת מסירה", shadowMode);
+                    $"קובץ סטטוסי ציטה לא נמצא/לא קריא ({_settings.StatusFilePath}) — לא מחייבים בלי הוכחת מסירה", shadowMode);
 
             var failures = new List<string>();
-            var ageHours = (now - dates.LastWriteUtc).TotalHours;
-            if (ageHours > _settings.StaleDatesHours)
-                failures.Add($"קובץ תאריכי ציטה לא עודכן {ageHours:0} שעות — בדוק את Cheetah Daily");
+            var zone = _clock.LocalTimeZone;
+            var refused = _settings.RefusedStatuses;
+
+            // A frozen file while shipments are still moving means the Cheetah link is down
+            // (e.g. the 401s since 26.11.2026) — deliveries will silently stop being billed.
+            var lastChange = snapshot.All.Count == 0 ? snapshot.FileWrittenUtc : snapshot.All.Max(x => x.UpdatedUtc);
+            var silentHours = (now - lastChange).TotalHours;
+            if (snapshot.All.Any(x => !x.Terminal) && silentHours > _settings.StaleStatusHours)
+                failures.Add($"אין עדכון סטטוס מציטה {silentHours:0} שעות בזמן שיש משלוחים בדרך — בדוק את החיבור של electra-worker לציטה");
 
             var candidates = await _readModel.GetCandidatesAsync(
                 today.AddDays(-_settings.LookbackDays), _settings.FatherCards.Distinct().ToArray(), ct); // binder appends config to defaults
 
-            var report = new StringBuilder("DN,DnDate,CardCode,SourceOrder,ChitaReceipt,Decision,InvoiceDate,Reason\r\n");
-            int invoiced = 0, waiting = 0, notCheetah = 0, skipped = 0;
+            var report = new StringBuilder("DN,DnDate,CardCode,OrderRef,ChitaStatus,ChitaUpdated,Decision,InvoiceDate,Reason\r\n");
+            int invoiced = 0, inTransit = 0, notCheetah = 0, skipped = 0;
 
             foreach (var c in candidates)
             {
                 ct.ThrowIfCancellationRequested();
-                var receipt = c.SourceOrderDocNum is int o ? dates.ReceiptDate(_settings.ChitaCompany, o) : null;
-                var verdict = HomeDeliveryEligibility.Decide(c, receipt);
+                var status = snapshot.ForOrder(c.NumAtCard);
+                var verdict = HomeDeliveryEligibility.Decide(c, status, _settings.DeliveredStatus, refused, zone);
 
                 switch (verdict.Decision)
                 {
@@ -83,11 +88,16 @@ public sealed class HomeDeliveryInvoicingModule : IOutboundModule
                         notCheetah++;
                         continue; // branch delivery — not this flow, keep the report readable
 
-                    case HomeDeliveryDecision.AwaitingSignature:
-                        waiting++;
-                        var days = today.DayNumber - receipt!.Value.DayNumber;
-                        if (days >= _settings.UnsignedAlertDays)
-                            failures.Add($"ת.מ {c.DnDocNum}: נמסר בציטה לפני {days} ימים ועדיין אין חתימה ב-SAP");
+                    case HomeDeliveryDecision.InTransit:
+                        inTransit++;
+                        var days = today.DayNumber - c.DnDate.DayNumber;
+                        if (days >= _settings.InTransitAlertDays)
+                            failures.Add($"ת.מ {c.DnDocNum}: בדרך כבר {days} ימים ({status!.Status})");
+                        break;
+
+                    case HomeDeliveryDecision.Refused:
+                    case HomeDeliveryDecision.KeyMismatch:
+                        failures.Add($"ת.מ {c.DnDocNum}: {verdict.Reason}");
                         break;
 
                     case HomeDeliveryDecision.Invoice:
@@ -102,7 +112,7 @@ public sealed class HomeDeliveryInvoicingModule : IOutboundModule
                             try
                             {
                                 var entry = await _sap.CreateInvoiceFromDeliveryNoteAsync(
-                                    new InvoiceDraft(c.DnDocEntry, c.CardCode, $"chita:{c.SourceOrderDocNum}", 0m, verdict.InvoiceDate), ct);
+                                    new InvoiceDraft(c.DnDocEntry, c.CardCode, $"chita:{c.NumAtCard}", 0m, verdict.InvoiceDate), ct);
                                 _log.LogInformation("משלוחי בית: נוצרה חשבונית {Inv} לת.מ {Dn}", entry, c.DnDocNum);
                                 invoiced++;
                             }
@@ -119,8 +129,8 @@ public sealed class HomeDeliveryInvoicingModule : IOutboundModule
                         break;
                 }
 
-                report.Append($"{c.DnDocNum},{c.DnDate:yyyy-MM-dd},{Csv(c.CardCode)},{c.SourceOrderDocNum},{receipt:yyyy-MM-dd},")
-                      .Append($"{verdict.Decision},{verdict.InvoiceDate:yyyy-MM-dd},{Csv(verdict.Reason)}\r\n");
+                report.Append($"{c.DnDocNum},{c.DnDate:yyyy-MM-dd},{Csv(c.CardCode)},{Csv(c.NumAtCard)},{Csv(status?.Status)},")
+                      .Append($"{status?.UpdatedUtc:yyyy-MM-dd HH:mm},{verdict.Decision},{verdict.InvoiceDate:yyyy-MM-dd},{Csv(verdict.Reason)}\r\n");
             }
 
             if (shadowMode)
@@ -131,8 +141,8 @@ public sealed class HomeDeliveryInvoicingModule : IOutboundModule
             }
 
             _log.LogInformation(
-                "משלוחי בית: {Invoiced} {Mode}, {Waiting} ממתינים לחתימה, {Skipped} דולגו, {NotCheetah} לא ציטה, {Failed} בעיות",
-                invoiced, shadowMode ? "היו מחויבים (shadow)" : "חויבו", waiting, skipped, notCheetah, failures.Count);
+                "משלוחי בית: {Invoiced} {Mode}, {InTransit} בדרך, {Skipped} דולגו, {NotCheetah} לא ציטה, {Failed} בעיות",
+                invoiced, shadowMode ? "היו מחויבים (shadow)" : "חויבו", inTransit, skipped, notCheetah, failures.Count);
 
             return failures.Count == 0
                 ? ProcessingResult.Ok(runName, "HomeDeliveryInvoice", shadow: shadowMode)

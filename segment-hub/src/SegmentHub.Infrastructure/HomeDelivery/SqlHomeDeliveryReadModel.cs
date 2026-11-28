@@ -6,7 +6,7 @@ namespace SegmentHub.Infrastructure.HomeDelivery;
 
 /// <summary>
 /// READ-ONLY. Open Segment delivery notes with the facts the eligibility rules need, in one query.
-/// Same signals as the OIG auto-invoice app: DLN1.LineStatus, ATC1 "חתימה", direct order invoicing.
+/// Open lines (DLN1.LineStatus) and the direct-order-invoicing guard, as in the OIG auto-invoice app.
 /// Parameterized; uses a read-intent connection. Never writes.
 /// </summary>
 public sealed class SqlHomeDeliveryReadModel : IHomeDeliveryReadModel
@@ -24,11 +24,9 @@ public sealed class SqlHomeDeliveryReadModel : IHomeDeliveryReadModel
         var inList = string.Join(",", names);
         var sql = $"""
             SELECT H.DocEntry, H.DocNum, H.DocDate, H.CardCode, C.FatherCard, CAST(H.Comments AS nvarchar(4000)) AS Comments,
-              CASE WHEN EXISTS (SELECT 1 FROM ATC1 g WHERE g.AbsEntry = H.AtcEntry AND g.FileName LIKE N'%חתימה%')
-                   THEN 1 ELSE 0 END AS HasChitaSignature,
+              H.NumAtCard,
+              CASE WHEN EXISTS (SELECT 1 FROM ATC1 g WHERE g.AbsEntry = H.AtcEntry) THEN 1 ELSE 0 END AS HasPodAttachment,
               (SELECT COUNT(*) FROM DLN1 L WHERE L.DocEntry = H.DocEntry AND L.LineStatus = 'O') AS OpenLinesCount,
-              (SELECT MIN(O.DocNum) FROM DLN1 L JOIN ORDR O ON O.DocEntry = L.BaseEntry
-                WHERE L.DocEntry = H.DocEntry AND L.BaseType = 17) AS SourceOrderDocNum,
               CASE WHEN EXISTS (SELECT 1 FROM DLN1 L
                                 JOIN INV1 I ON I.BaseType = 17 AND I.BaseEntry = L.BaseEntry
                                 JOIN OINV IH ON IH.DocEntry = I.DocEntry AND IH.CANCELED = 'N'
@@ -61,9 +59,9 @@ public sealed class SqlHomeDeliveryReadModel : IHomeDeliveryReadModel
                 CardCode = r.GetString(3),
                 FatherCard = r.IsDBNull(4) ? null : r.GetString(4),
                 Comments = r.IsDBNull(5) ? null : r.GetString(5),
-                HasChitaSignature = r.GetInt32(6) == 1,
-                OpenLinesCount = r.GetInt32(7),
-                SourceOrderDocNum = r.IsDBNull(8) ? null : r.GetInt32(8),
+                NumAtCard = r.IsDBNull(6) ? null : r.GetString(6),
+                HasPodAttachment = r.GetInt32(7) == 1,
+                OpenLinesCount = r.GetInt32(8),
                 SourceOrderInvoicedDirectly = r.GetInt32(9) == 1
             });
         }
