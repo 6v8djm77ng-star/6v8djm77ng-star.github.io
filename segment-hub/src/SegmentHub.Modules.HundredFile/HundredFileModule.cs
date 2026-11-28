@@ -16,6 +16,15 @@ public sealed class HundredFileModule : IOutboundModule
 {
     public const string ModuleKey = "HundredFile";
 
+    // חשבוניות ישראל: a VAT invoice at/above this net amount needs an ITA allocation number, or the
+    // Segment portal parks it as a draft ("לא הוזן מספר הקצאה"). 5,000 matches the portal's behavior
+    // seen in the 28.11.2026 report (every rejected invoice >= 5,254; every accepted one below it).
+    public const decimal AllocationThreshold = 5000m;
+
+    // An invoice still waiting for its allocation after this many days means the allocation
+    // process is down (as it was 13–26.11.2026) — that is an alert, not a quiet retry.
+    public const int StaleAllocationDays = 2;
+
     private readonly ISapGateway _sap;
     private readonly IFilePublisher _publisher;
     private readonly ILogger<HundredFileModule> _log;
@@ -49,10 +58,26 @@ public sealed class HundredFileModule : IOutboundModule
             }
 
             var written = 0;
+            var deferred = 0;
             var failures = new List<string>();
             foreach (var invoice in invoices)
             {
                 ct.ThrowIfCancellationRequested();
+
+                // Never report an invoice before its allocation number exists: that is exactly how
+                // 31 invoices got stuck on 26.11 (submitted minutes before their allocations landed).
+                if (NeedsAllocation(invoice) && string.IsNullOrWhiteSpace(invoice.AllocationNumber))
+                {
+                    var waitDays = today.DayNumber - invoice.InvoiceDate.DayNumber;
+                    if (waitDays >= StaleAllocationDays)
+                        failures.Add($"{invoice.InvoiceNumber}: ממתינה למספר הקצאה {waitDays} ימים — בדוק את תהליך ההקצאה");
+                    else
+                        deferred++;
+                    _log.LogWarning("קובץ 100: invoice {Invoice} held back — no allocation number yet (net {Net}, {Days}d)",
+                        invoice.InvoiceNumber, invoice.NetBeforeVat, waitDays);
+                    continue;
+                }
+
                 var fileName = HundredFileGenerator.FileNameFor(invoice);
                 try
                 {
@@ -76,8 +101,8 @@ public sealed class HundredFileModule : IOutboundModule
                 }
             }
 
-            _log.LogInformation("קובץ 100: {Written}/{Total} files {Mode}, {Failed} skipped",
-                written, invoices.Count, shadowMode ? "written to shadow folder" : "published", failures.Count);
+            _log.LogInformation("קובץ 100: {Written}/{Total} files {Mode}, {Deferred} awaiting allocation, {Failed} problems",
+                written, invoices.Count, shadowMode ? "written to shadow folder" : "published", deferred, failures.Count);
 
             return failures.Count == 0
                 ? ProcessingResult.Ok(runName, "HundredFile", shadow: shadowMode)
@@ -90,4 +115,6 @@ public sealed class HundredFileModule : IOutboundModule
             return ProcessingResult.Fault(runName, ex.Message, shadowMode);
         }
     }
+
+    private static bool NeedsAllocation(HundredFileInvoice i) => i.VatSum > 0 && i.NetBeforeVat >= AllocationThreshold;
 }

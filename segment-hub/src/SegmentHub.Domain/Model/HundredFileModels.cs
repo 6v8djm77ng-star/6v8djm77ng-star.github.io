@@ -17,6 +17,12 @@ public sealed record HundredFileInvoice
     public required string Currency { get; init; }
     public string? CardCode { get; init; }                    // 5-char field; source not confirmed
     public required IReadOnlyList<HundredFileDeliveryNote> DeliveryNotes { get; init; }
+
+    /// <summary>OINV.DocTotal - VatSum. Drives the ITA allocation-number requirement.</summary>
+    public decimal NetBeforeVat { get; init; }
+
+    /// <summary>ITA allocation number (OINV.U_eyAlloc). Null until the allocation add-on obtained it.</summary>
+    public string? AllocationNumber { get; init; }
 }
 
 /// <summary>A base delivery note of the invoice (record type "1").</summary>

@@ -167,7 +167,7 @@ public sealed class ServiceLayerSapGateway : ISapGateway
             filter += $" and ({ReportedField} eq null or {ReportedField} ne 'Y')";
 
         var invoices = await GetAllPagesAsync<SlInvoice>(
-            "Invoices?$select=DocEntry,DocNum,DocDate,CardCode,DocCurrency,TotalDiscount,VatSum,DocumentLines" +
+            "Invoices?$select=DocEntry,DocNum,DocDate,CardCode,DocCurrency,TotalDiscount,VatSum,DocTotal,U_eyAlloc,DocumentLines" +
             $"&$filter={filter}&$orderby=DocNum", ct);
 
         var bpCache = new Dictionary<string, SlBp?>();
@@ -221,7 +221,9 @@ public sealed class ServiceLayerSapGateway : ISapGateway
                 DiscountValue = inv.TotalDiscount,
                 VatSum = inv.VatSum,
                 Currency = inv.DocCurrency ?? "",
-                DeliveryNotes = notes
+                DeliveryNotes = notes,
+                NetBeforeVat = inv.DocTotal - inv.VatSum,
+                AllocationNumber = Str(inv.U_eyAlloc)
             });
         }
 
@@ -316,7 +318,7 @@ public sealed class ServiceLayerSapGateway : ISapGateway
     private sealed record DeliveryNoteDto(int DocEntry, int DocNum, string CardCode, string? DocumentStatus);
     private sealed record DocEntryDto(int DocEntry);
     private sealed record SlInvoice(int DocEntry, int DocNum, string DocDate, string CardCode, string? DocCurrency,
-        decimal TotalDiscount, decimal VatSum, List<SlLine>? DocumentLines);
+        decimal TotalDiscount, decimal VatSum, decimal DocTotal, JsonElement? U_eyAlloc, List<SlLine>? DocumentLines);
     private sealed record SlLine(int LineNum, string? ItemCode, decimal Quantity, decimal UnitPrice, decimal LineTotal,
         int? BaseType, int? BaseEntry, int? BaseLine, string? SupplierCatNum);
     private sealed record SlBp(string CardCode, string? FatherCard, JsonElement? U_ESG_SupplierCode);

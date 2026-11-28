@@ -68,6 +68,45 @@ public class HundredFileModuleTests
     }
 
     [Fact]
+    public async Task Invoice_needing_allocation_is_held_back_until_it_has_one()
+    {
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        _sap.PendingInvoices =
+        [
+            Inv(41) with { InvoiceDate = today, NetBeforeVat = 6000m, AllocationNumber = null },   // wait
+            Inv(42) with { InvoiceDate = today, NetBeforeVat = 6000m, AllocationNumber = "123456789" },
+            Inv(43) with { InvoiceDate = today, NetBeforeVat = 4000m, AllocationNumber = null }    // below threshold
+        ];
+        var result = await Sut().GenerateOutboundAsync(shadowMode: false, CancellationToken.None);
+
+        Assert.Equal(ProcessingStatus.Succeeded, result.Status); // a fresh wait is normal, not a fault
+        Assert.Equal(new[] { "100_42.txt", "100_43.txt" }, _pub.Published);
+        Assert.Equal(new[] { 42, 43 }, _sap.MarkedAsReported);  // 41 stays unmarked → retried next run
+    }
+
+    [Fact]
+    public async Task Allocation_missing_for_days_raises_an_alert()
+    {
+        var old = DateOnly.FromDateTime(DateTime.Today).AddDays(-HundredFileModule.StaleAllocationDays);
+        _sap.PendingInvoices = [Inv(51) with { InvoiceDate = old, NetBeforeVat = 9000m, AllocationNumber = null }];
+        var result = await Sut().GenerateOutboundAsync(shadowMode: false, CancellationToken.None);
+
+        Assert.Equal(ProcessingStatus.Faulted, result.Status);
+        Assert.Contains("הקצאה", result.FaultDetail);
+        Assert.Empty(_pub.Published);
+    }
+
+    [Fact]
+    public async Task Vat_exempt_invoice_never_waits_for_allocation()
+    {
+        _sap.PendingInvoices = [Inv(61) with { NetBeforeVat = 20000m, VatSum = 0m, AllocationNumber = null }];
+        var result = await Sut().GenerateOutboundAsync(shadowMode: false, CancellationToken.None);
+
+        Assert.Equal(ProcessingStatus.Succeeded, result.Status);
+        Assert.Equal(new[] { "100_61.txt" }, _pub.Published);
+    }
+
+    [Fact]
     public async Task Bad_invoice_is_skipped_and_reported_without_blocking_the_rest()
     {
         _sap.PendingInvoices = [Inv(31, price: -1m), Inv(32)];
