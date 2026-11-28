@@ -73,6 +73,10 @@ decode → parse → validate(SAP) → map → post(SAP)
 
 ## Home-delivery invoicing (בית לקוח, Cheetah) — `SegmentHub.Modules.HomeDelivery`
 
+**Status: DISABLED (2026-11-28).** Read-only checks on SAP: none of 919 Segment orders in the last 90 days
+appear in the Cheetah receipt file, and father card 2004999 orders are already invoiced (127/128) by the
+existing flow. Kept, tested and switched off in case Segment home deliveries move to Cheetah.
+
 Outbound module `HomeDeliveryInvoicing`, runs daily at 19:00 (after Chita-POD-to-SAP at 18:00).
 Reuses existing signals; no direct Cheetah API:
 
