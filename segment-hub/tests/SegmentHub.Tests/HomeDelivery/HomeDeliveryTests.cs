@@ -181,12 +181,20 @@ public class HomeDeliveryInvoicingModuleTests
     [Fact]
     public async Task Frozen_statuses_while_shipments_are_moving_raise_an_alert()
     {
-        // Exactly the 26.11.2026 situation: Cheetah lookups return 401, nothing updates for days.
         _rm.Items.Add(C(1));
-        var r = await Sut(Snap(E(1, "Delivered", "2026-11-26T09:59:00Z"), E(2, "Onitsway", "2026-11-26T09:59:00Z")))
+        var r = await Sut(Snap(E(1, "Delivered", "2026-11-24T09:59:00Z"), E(2, "Onitsway", "2026-11-24T09:59:00Z")))
             .GenerateOutboundAsync(true, default);
         Assert.Equal(ProcessingStatus.Faulted, r.Status);
         Assert.Contains("ציטה", r.FaultDetail);
+    }
+
+    [Fact]
+    public async Task Quiet_weekend_is_not_an_alert()
+    {
+        _rm.Items.Add(C(1));
+        var r = await Sut(Snap(E(1, "Delivered", "2026-11-26T09:59:00Z"), E(2, "Onitsway", "2026-11-26T09:59:00Z")))
+            .GenerateOutboundAsync(true, default);
+        Assert.Equal(ProcessingStatus.Succeeded, r.Status);
     }
 
     [Fact]

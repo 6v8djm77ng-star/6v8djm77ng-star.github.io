@@ -64,7 +64,7 @@ public sealed class HomeDeliveryInvoicingModule : IOutboundModule
             var refused = _settings.RefusedStatuses;
 
             // A frozen file while shipments are still moving means the Cheetah link is down
-            // (e.g. the 401s since 26.11.2026) — deliveries will silently stop being billed.
+            // (token expired, account blocked) — deliveries will silently stop being billed.
             var lastChange = snapshot.All.Count == 0 ? snapshot.FileWrittenUtc : snapshot.All.Max(x => x.UpdatedUtc);
             var silentHours = (now - lastChange).TotalHours;
             if (snapshot.All.Any(x => !x.Terminal) && silentHours > _settings.StaleStatusHours)

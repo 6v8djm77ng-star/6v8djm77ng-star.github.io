@@ -35,8 +35,11 @@ public sealed class HomeDeliverySettings
 
     public int LookbackDays { get; set; } = 60;
 
-    /// <summary>No status change for this long while shipments are still in transit → the Cheetah link is down.</summary>
-    public int StaleStatusHours { get; set; } = 24;
+    /// <summary>
+    /// No status change for this long while shipments are still in transit → the Cheetah link is down.
+    /// 72h so a normal Friday–Saturday without deliveries never alerts.
+    /// </summary>
+    public int StaleStatusHours { get; set; } = 72;
 
     /// <summary>In transit longer than this → alert.</summary>
     public int InTransitAlertDays { get; set; } = 7;

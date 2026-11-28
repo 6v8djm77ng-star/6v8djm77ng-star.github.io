@@ -86,7 +86,7 @@ lines / order invoiced directly → skip · not Delivered → in transit (alert 
 Delivered → invoice all open DN lines, dated on the local day Cheetah confirmed (never before the DN date).
 
 Faults: missing/unreadable status file (never "nothing delivered"); no status change for
-`StaleStatusHours` while shipments are in transit (= Cheetah link down; the worker got 401s from 26.11.2026);
+`StaleStatusHours` while shipments are in transit (= Cheetah link down; 72h so a quiet weekend does not alert);
 refused / key mismatch / long in transit; failed invoice post (per DN, does not block others).
 
 **Status: disabled by default.** Enable in shadow where the status file is readable (the VM), with
