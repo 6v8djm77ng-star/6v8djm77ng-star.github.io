@@ -57,10 +57,28 @@ each record sums to exactly 100.
 | DeliveryNoteLineNum | 5 |
 | PurchaseOrderNum | 11 |
 
-NOTE: the current `HundredFileGenerator` uses a wrong header/detail/footer layout. It must be
-rebuilt to emit these three record types. Still TODO (needs the decompiled assembly + value
-formatting logic): record ordering, amount formatting (agora? sign?), date format, how DocType /
-SupplyApprovalNum / references are derived.
+### Formatting rules (confirmed from EasySale code)
+- Every field: `value.PadLeft(width, '0')`; empty/unset field → all zeros (fillers too).
+- Dates: `yyMMdd`. InvoiceNum/DocNum: plain integer text.
+- GrossDocTotal / DiscountValue: `"0.00"`; VatSum and line UnitsQuantity: `".00"`; line UnitPrice: `"000000.0000"`.
+- DocType = `"1"` for Segment invoices; line UnitsOrPackages = `"0"`.
+- Record order (OrderByDeliveryNotes): Invoice record, then per base delivery note its DN record followed by its lines. CRLF after every record. No footer.
+- Sent flag: `OINV.U_ESG_100FileCreated` (existing EasySale field).
+
+### Implementation status — IMPLEMENTED (`HundredFileGenerator`, `HundredFileModule`)
+Layout and formatting are exact and unit-tested. Data sourcing (Service Layer) follows the
+decompiled SQL where it was visible; these are ASSUMPTIONS to confirm by diff:
+- NumAtCardFromPurchaseOrder = DN.NumAtCard · SubCatalogNum = line.SupplierCatNum ·
+  UnitPrice = line.UnitPrice (pre-discount) · DeliveryNoteLineNum = line.BaseLine · sent value `'Y'`.
+- DiscountSum, OrderLineNum, PurchaseOrderNum, Reference2, invoice CardCode: left at zero default.
+- Discount field is written only when non-zero (EasySale sets it conditionally).
+- File name `100_{InvoiceNum}.txt` (EasySale's own naming not captured).
+- Credit memos (negative amounts) are refused explicitly, not emitted.
+
+### How to verify (shadow mode)
+Shadow writes each invoice's file to `C:\OIG-Monitor\segment-hub\shadow-out\HundredFile\<date>\`
+(outside the EasySale tree, so WinSCP can never upload it). Compare it byte-for-byte with the
+file EasySale sent for the same invoice; any differing column points at exactly one assumption above.
 
 ## ExportDeliveryNotes (ממשק 9) — DeliveryNote_*.txt
 

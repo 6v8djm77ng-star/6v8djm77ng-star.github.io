@@ -20,4 +20,10 @@ public interface IOutboundModule
 public interface IFilePublisher
 {
     Task PublishAsync(string moduleKey, string fileName, byte[] content, CancellationToken ct);
+
+    /// <summary>
+    /// Shadow mode: write the generated file to a local folder outside EasySale's tree so it can be
+    /// compared with the file EasySale produced. Never reaches Segment.
+    /// </summary>
+    Task WriteShadowCopyAsync(string moduleKey, string fileName, byte[] content, CancellationToken ct);
 }

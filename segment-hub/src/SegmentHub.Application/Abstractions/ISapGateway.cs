@@ -31,10 +31,15 @@ public interface ISapGateway
     /// <summary>עדכון סטטוס תעודת משלוח ב-SAP לפי דיווח אלקטרה (ממשק 9).</summary>
     Task UpdateDeliveryNoteStatusAsync(int docEntry, DeliveryNoteAction action, CancellationToken ct);
 
-    /// <summary>Fetch invoices that haven't yet been reported in a "קובץ 100" file (ממשק 7, outbound).</summary>
-    Task<IReadOnlyList<InvoiceForHundredFile>> GetPendingHundredFileInvoicesAsync(DateOnly from, DateOnly to, CancellationToken ct);
+    /// <summary>
+    /// Segment invoices for "קובץ 100" (ממשק 7, outbound) in a date range, with their base delivery notes
+    /// and lines. <paramref name="includeReported"/> = true also returns invoices already flagged as sent
+    /// (used in shadow mode to compare against EasySale's output).
+    /// </summary>
+    Task<IReadOnlyList<HundredFileInvoice>> GetPendingHundredFileInvoicesAsync(
+        DateOnly from, DateOnly to, bool includeReported, CancellationToken ct);
 
-    /// <summary>Mark invoices as reported in "קובץ 100" so they aren't picked up again.</summary>
+    /// <summary>Flag invoices as reported (U_ESG_100FileCreated, the field EasySale already uses).</summary>
     Task MarkInvoicesAsReportedAsync(IReadOnlyList<int> sapDocEntries, CancellationToken ct);
 }
 

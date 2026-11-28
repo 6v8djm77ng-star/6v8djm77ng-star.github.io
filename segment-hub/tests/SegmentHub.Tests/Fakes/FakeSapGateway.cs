@@ -10,7 +10,8 @@ public sealed class FakeSapGateway : ISapGateway
     public bool NextItemExists { get; set; } = true;
     public int NextDocEntry { get; set; } = 100;
     public bool NextOrderExists { get; set; }
-    public List<InvoiceForHundredFile> PendingInvoices { get; set; } = [];
+    public List<HundredFileInvoice> PendingInvoices { get; set; } = [];
+    public bool? LastIncludeReported { get; private set; }
     public List<int> MarkedAsReported { get; } = [];
     public List<(int DocEntry, DeliveryNoteAction Action)> UpdatedDeliveryNotes { get; } = [];
 
@@ -35,8 +36,12 @@ public sealed class FakeSapGateway : ISapGateway
         return Task.CompletedTask;
     }
 
-    public Task<IReadOnlyList<InvoiceForHundredFile>> GetPendingHundredFileInvoicesAsync(DateOnly from, DateOnly to, CancellationToken ct)
-        => Task.FromResult<IReadOnlyList<InvoiceForHundredFile>>(PendingInvoices);
+    public Task<IReadOnlyList<HundredFileInvoice>> GetPendingHundredFileInvoicesAsync(
+        DateOnly from, DateOnly to, bool includeReported, CancellationToken ct)
+    {
+        LastIncludeReported = includeReported;
+        return Task.FromResult<IReadOnlyList<HundredFileInvoice>>(PendingInvoices);
+    }
 
     public Task MarkInvoicesAsReportedAsync(IReadOnlyList<int> sapDocEntries, CancellationToken ct)
     {

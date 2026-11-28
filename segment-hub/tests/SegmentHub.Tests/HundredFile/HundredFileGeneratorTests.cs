@@ -5,120 +5,141 @@ using Xunit;
 
 namespace SegmentHub.Tests.HundredFile;
 
+/// <summary>
+/// Pins the קובץ 100 layout reverse-engineered from the EasySale exporter: three record types,
+/// exact field offsets/widths, '0' left-padding, yyMMdd dates, "0.00"/".00"/"000000.0000" amounts.
+/// All data is synthetic.
+/// </summary>
 public class HundredFileGeneratorTests
 {
-    public HundredFileGeneratorTests()
-    {
-        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
-    }
+    public HundredFileGeneratorTests() => Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 
-    private static InvoiceForHundredFile MakeInvoice(
-        string number = "INV001",
-        decimal net = 1000m,
-        decimal vat = 170m,
-        decimal total = 1170m)
+    private static HundredFileLine Line(string item = "IT100", decimal qty = 2m, decimal price = 153.85m) => new()
     {
-        return new InvoiceForHundredFile
-        {
-            InvoiceNumber = number,
-            InvoiceDate = new DateOnly(2026, 11, 27),
-            CustomerCode = "C001",
-            CustomerName = "לקוח בדיקה",
-            NetAmount = net,
-            VatAmount = vat,
-            TotalAmount = total,
-            SapDocEntry = 12345
-        };
+        SubCatalogNum = "SUB1",
+        ItemCode = item,
+        Quantity = qty,
+        UnitPrice = price,
+        DeliveryNoteLineNum = "1"
+    };
+
+    private static HundredFileInvoice Invoice(params HundredFileDeliveryNote[] notes) => new()
+    {
+        SapDocEntry = 1,
+        InvoiceNumber = "123456",
+        SupplierCode = "600060078",
+        InvoiceDate = new DateOnly(2026, 11, 27),
+        GrossDocTotal = 1000m,
+        DiscountValue = 0m,
+        VatSum = 180m,
+        Currency = "ILS",
+        DeliveryNotes = notes.Length > 0 ? notes : [Note()]
+    };
+
+    private static HundredFileDeliveryNote Note(string docNum = "2003837", params HundredFileLine[] lines) => new()
+    {
+        CardCode = "C10001",
+        DocNum = docNum,
+        DocDate = new DateOnly(2026, 11, 26),
+        SupplyApprovalNum = "15944771",
+        NumAtCardFromPurchaseOrder = "100001",
+        Lines = lines.Length > 0 ? lines : [Line()]
+    };
+
+    private static string[] Records(string text) => text.Split("\r\n", StringSplitOptions.RemoveEmptyEntries);
+
+    [Fact]
+    public void Every_record_is_exactly_100_chars_and_crlf_terminated()
+    {
+        var text = HundredFileGenerator.Render(Invoice(Note("1", Line(), Line("IT200")), Note("2")));
+        Assert.EndsWith("\r\n", text);
+        Assert.All(Records(text), r => Assert.Equal(100, r.Length));
     }
 
     [Fact]
-    public void Generate_SingleInvoice_ProducesThreeLines()
+    public void Records_are_ordered_invoice_then_each_note_followed_by_its_lines()
     {
-        var invoices = new[] { MakeInvoice() };
-        var bytes = HundredFileGenerator.Generate("600060078", new DateOnly(2026, 11, 26), new DateOnly(2026, 11, 27), 1, invoices);
-
-        var text = Encoding.GetEncoding(1255).GetString(bytes);
-        var lines = text.Split("\r\n", StringSplitOptions.RemoveEmptyEntries);
-
-        Assert.Equal(3, lines.Length);
-        Assert.Equal('0', lines[0][0]);
-        Assert.Equal('1', lines[1][0]);
-        Assert.Equal('2', lines[2][0]);
+        var text = HundredFileGenerator.Render(Invoice(Note("1", Line(), Line("IT200")), Note("2")));
+        var types = string.Concat(Records(text).Select(r => r[0]));
+        Assert.Equal("01221" + "2", types);
     }
 
     [Fact]
-    public void Generate_AllLinesAre100Chars()
+    public void Invoice_record_fields_sit_at_exact_offsets()
     {
-        var invoices = new[] { MakeInvoice(), MakeInvoice("INV002") };
-        var bytes = HundredFileGenerator.Generate("600060078", new DateOnly(2026, 11, 26), new DateOnly(2026, 11, 27), 1, invoices);
-
-        var text = Encoding.GetEncoding(1255).GetString(bytes);
-        var lines = text.Split("\r\n", StringSplitOptions.RemoveEmptyEntries);
-
-        foreach (var line in lines)
-            Assert.Equal(100, line.Length);
+        var r = Records(HundredFileGenerator.Render(Invoice()))[0];
+        Assert.Equal("0", r[..1]);
+        Assert.Equal("00000", r[1..6]);              // CardCode (not set) → zeros
+        Assert.Equal("0600060078", r[6..16]);        // SupplierCode, '0' left-padded
+        Assert.Equal("261127", r[16..22]);           // yyMMdd
+        Assert.Equal("0000123456", r[22..32]);       // InvoiceNum
+        Assert.Equal("000001000.00", r[32..44]);     // GrossDocTotal "0.00"
+        Assert.Equal("000000000000", r[44..56]);     // zero discount left at default
+        Assert.Equal("000000180.00", r[80..92]);     // VatSum ".00"
+        Assert.Equal("ILS", r[92..95]);
+        Assert.Equal("00000", r[95..100]);
     }
 
     [Fact]
-    public void Generate_HeaderContainsSupplierAndDates()
+    public void Delivery_note_record_fields_sit_at_exact_offsets()
     {
-        var bytes = HundredFileGenerator.Generate("600060078", new DateOnly(2026, 11, 26), new DateOnly(2026, 11, 27), 42, new[] { MakeInvoice() });
-        var text = Encoding.GetEncoding(1255).GetString(bytes);
-        var header = text.Split("\r\n")[0];
-
-        Assert.StartsWith("0", header);
-        Assert.Contains("600060078", header);
-        Assert.Contains("20261126", header);
-        Assert.Contains("20261127", header);
-        Assert.Contains("00000042", header);
+        var r = Records(HundredFileGenerator.Render(Invoice()))[1];
+        Assert.Equal("1", r[..1]);
+        Assert.Equal("0000C10001", r[1..11]);        // CardCode
+        Assert.Equal("0002003837", r[11..21]);       // DocNum
+        Assert.Equal("1", r[21..22]);                // DocType = Segment
+        Assert.Equal("261126", r[22..28]);           // DocDate yyMMdd
+        Assert.Equal("0015944771", r[28..38]);       // SupplyApprovalNum
+        Assert.Equal("000000000", r[38..47]);        // GrossDocTotal (credit-memo only) → zeros
+        Assert.Equal("00000100001", r[86..97]);      // NumAtCardFromPurchaseOrder
     }
 
     [Fact]
-    public void Generate_FooterContainsTotals()
+    public void Line_record_fields_sit_at_exact_offsets()
     {
-        var invoices = new[] { MakeInvoice(net: 1000m, vat: 170m, total: 1170m) };
-        var bytes = HundredFileGenerator.Generate("600060078", new DateOnly(2026, 11, 26), new DateOnly(2026, 11, 27), 1, invoices);
-        var text = Encoding.GetEncoding(1255).GetString(bytes);
-        var lines = text.Split("\r\n", StringSplitOptions.RemoveEmptyEntries);
-        var footer = lines[^1];
-
-        Assert.StartsWith("2", footer);
-        Assert.Contains("00000001", footer); // record count
+        var r = Records(HundredFileGenerator.Render(Invoice()))[2];
+        Assert.Equal("2", r[..1]);
+        Assert.Equal("000000000SUB1", r[1..14]);     // SubCatalogNum
+        Assert.Equal("00000000IT100", r[14..27]);    // ItemCode
+        Assert.Equal("0", r[27..28]);                // UnitsOrPackages
+        Assert.Equal("0002.00", r[28..35]);          // UnitsQuantity ".00"
+        Assert.Equal("000153.8500", r[41..52]);      // UnitPrice "000000.0000"
+        Assert.Equal("00001", r[84..89]);            // DeliveryNoteLineNum
     }
 
     [Fact]
-    public void Generate_AmountsInAgora()
+    public void Negative_amount_is_a_fault_not_a_corrupt_line()
     {
-        var invoices = new[] { MakeInvoice(net: 100.50m, vat: 17.09m, total: 117.59m) };
-        var bytes = HundredFileGenerator.Generate("600060078", new DateOnly(2026, 11, 26), new DateOnly(2026, 11, 27), 1, invoices);
-        var text = Encoding.GetEncoding(1255).GetString(bytes);
-        var detail = text.Split("\r\n")[1];
-
-        // 100.50 * 100 = 10050
-        Assert.Contains("00000000010050", detail);
-        // 17.09 * 100 = 1709
-        Assert.Contains("000000001709", detail);
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            HundredFileGenerator.Render(Invoice(Note("1", Line(price: -5m)))));
+        Assert.Contains("שלילי", ex.Message);
     }
 
     [Fact]
-    public void Generate_EmptyInvoices_ProducesHeaderAndFooterOnly()
+    public void Value_wider_than_its_field_is_a_fault_not_a_silent_cut()
     {
-        var bytes = HundredFileGenerator.Generate("600060078", new DateOnly(2026, 11, 26), new DateOnly(2026, 11, 27), 1, []);
-        var text = Encoding.GetEncoding(1255).GetString(bytes);
-        var lines = text.Split("\r\n", StringSplitOptions.RemoveEmptyEntries);
-
-        Assert.Equal(2, lines.Length);
-        Assert.Equal('0', lines[0][0]);
-        Assert.Equal('2', lines[1][0]);
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            HundredFileGenerator.Render(Invoice(Note("1", Line(item: "ITEMCODE-TOO-LONG")))));
+        Assert.Contains("ItemCode", ex.Message);
     }
 
     [Fact]
-    public void Generate_HebrewCustomerName_EncodedInWindows1255()
+    public void Invoice_without_a_base_delivery_note_is_refused()
     {
-        var invoices = new[] { MakeInvoice() };
-        var bytes = HundredFileGenerator.Generate("600060078", new DateOnly(2026, 11, 26), new DateOnly(2026, 11, 27), 1, invoices);
+        var inv = Invoice() with { DeliveryNotes = [] };
+        Assert.Throws<InvalidOperationException>(() => HundredFileGenerator.Render(inv));
+    }
 
-        var text = Encoding.GetEncoding(1255).GetString(bytes);
-        Assert.Contains("לקוח בדיקה", text);
+    [Fact]
+    public void Generate_encodes_windows_1255_one_byte_per_char()
+    {
+        var bytes = HundredFileGenerator.Generate(Invoice());
+        Assert.Equal(3 * 102, bytes.Length); // 3 records × (100 + CRLF)
+    }
+
+    [Fact]
+    public void File_name_is_per_invoice()
+    {
+        Assert.Equal("100_123456.txt", HundredFileGenerator.FileNameFor(Invoice()));
     }
 }

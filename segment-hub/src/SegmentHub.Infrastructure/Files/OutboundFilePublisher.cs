@@ -36,6 +36,14 @@ public sealed class OutboundFilePublisher : IFilePublisher
         _log.LogInformation("Published {Module}/{File} ({Bytes} bytes)", moduleKey, fileName, content.Length);
     }
 
+    public async Task WriteShadowCopyAsync(string moduleKey, string fileName, byte[] content, CancellationToken ct)
+    {
+        var dir = Path.Combine(_opt.ShadowOutputPath, moduleKey, DateTime.Now.ToString("yyyy-MM-dd"));
+        Directory.CreateDirectory(dir);
+        await WriteSharedAsync(Path.Combine(dir, fileName), content, ct);
+        _log.LogInformation("SHADOW copy {Module}/{File} -> {Dir}", moduleKey, fileName, dir);
+    }
+
     private static async Task WriteSharedAsync(string path, byte[] content, CancellationToken ct)
     {
         await using var fs = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.ReadWrite);

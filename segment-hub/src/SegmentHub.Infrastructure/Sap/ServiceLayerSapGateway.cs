@@ -16,7 +16,19 @@ public sealed class ServiceLayerSapGateway : ISapGateway
 {
     private readonly HttpClient _http;
     private readonly ILogger<ServiceLayerSapGateway> _log;
+
+    // Reads: case-insensitive, so SL's PascalCase JSON binds to our DTOs.
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+
+    // Writes: Service Layer property names are case-sensitive PascalCase. Web defaults would send
+    // camelCase ("cardCode", "documentLines") which SL rejects — every POST/PATCH must use this.
+    private static readonly JsonSerializerOptions WriteJson = new()
+    {
+        PropertyNamingPolicy = null,
+        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
+    };
+
+    private const string ReportedField = "U_ESG_100FileCreated";
 
     public ServiceLayerSapGateway(HttpClient http, ILogger<ServiceLayerSapGateway> log)
     {
@@ -66,7 +78,7 @@ public sealed class ServiceLayerSapGateway : ISapGateway
             }
         };
 
-        using var resp = await _http.PostAsJsonAsync("Invoices", body, Json, ct);
+        using var resp = await _http.PostAsJsonAsync("Invoices", body, WriteJson, ct);
         if (!resp.IsSuccessStatusCode)
         {
             var detail = await resp.Content.ReadAsStringAsync(ct);
@@ -104,7 +116,7 @@ public sealed class ServiceLayerSapGateway : ISapGateway
             }).ToArray()
         };
 
-        using var resp = await _http.PostAsJsonAsync("Orders", body, Json, ct);
+        using var resp = await _http.PostAsJsonAsync("Orders", body, WriteJson, ct);
         if (!resp.IsSuccessStatusCode)
         {
             var detail = await resp.Content.ReadAsStringAsync(ct);
@@ -138,45 +150,160 @@ public sealed class ServiceLayerSapGateway : ISapGateway
         }
     }
 
-    public async Task<IReadOnlyList<InvoiceForHundredFile>> GetPendingHundredFileInvoicesAsync(DateOnly from, DateOnly to, CancellationToken ct)
+    // ----- קובץ 100 (ממשק 7) -----------------------------------------------------------------
+    // Mirrors the EasySale exporter's data shape. Field sources CONFIRMED from the decompiled SQL:
+    //   SupplierCode = ISNULL(BP.U_ESG_SupplierCode, FatherBP.U_ESG_SupplierCode)
+    //   GrossDocTotal = SUM(INV1.LineTotal), DiscountValue = OINV.DiscSum, VatSum, DocCur
+    //   DN: CardCode, DocNum, DocDate, U_ESG_SupplyApproval; sent-flag = OINV.U_ESG_100FileCreated
+    // ASSUMED (verify by diffing a shadow file against EasySale's file for the same invoice):
+    //   NumAtCardFromPurchaseOrder = DN.NumAtCard, SubCatalogNum = line.SupplierCatNum,
+    //   UnitPrice = line.UnitPrice (pre-discount), DeliveryNoteLineNum = line.BaseLine,
+    //   sent-flag value 'Y'. DiscountSum / OrderLineNum / PurchaseOrderNum are left at the zero default.
+    public async Task<IReadOnlyList<HundredFileInvoice>> GetPendingHundredFileInvoicesAsync(
+        DateOnly from, DateOnly to, bool includeReported, CancellationToken ct)
     {
-        var url = $"Invoices?$select=DocEntry,DocNum,CardCode,CardName,DocDate,DocTotal,VatSum" +
-                  $"&$filter=DocDate ge '{from:yyyy-MM-dd}' and DocDate le '{to:yyyy-MM-dd}'" +
-                  $" and U_HundredFileSent ne 'Y'&$orderby=DocNum";
+        var filter = $"DocDate ge '{from:yyyy-MM-dd}' and DocDate le '{to:yyyy-MM-dd}'";
+        if (!includeReported)
+            filter += $" and ({ReportedField} eq null or {ReportedField} ne 'Y')";
 
-        using var resp = await _http.GetAsync(url, ct);
-        if (!resp.IsSuccessStatusCode)
+        var invoices = await GetAllPagesAsync<SlInvoice>(
+            "Invoices?$select=DocEntry,DocNum,DocDate,CardCode,DocCurrency,TotalDiscount,VatSum,DocumentLines" +
+            $"&$filter={filter}&$orderby=DocNum", ct);
+
+        var bpCache = new Dictionary<string, SlBp?>();
+        var dnCache = new Dictionary<int, SlDn?>();
+        var result = new List<HundredFileInvoice>();
+
+        foreach (var inv in invoices)
         {
-            _log.LogWarning("HundredFile invoice query failed: {Status}", resp.StatusCode);
-            return [];
+            var supplierCode = await ResolveSupplierCodeAsync(inv.CardCode, bpCache, ct);
+            if (string.IsNullOrWhiteSpace(supplierCode))
+                continue; // no Segment supplier code on the customer or its father → not a Segment invoice
+
+            var lines = inv.DocumentLines ?? [];
+            var notes = new List<HundredFileDeliveryNote>();
+            foreach (var group in lines.Where(l => l.BaseType == 15 && l.BaseEntry is not null)
+                                       .GroupBy(l => l.BaseEntry!.Value))
+            {
+                if (!dnCache.TryGetValue(group.Key, out var dn))
+                {
+                    dn = await GetSingleAsync<SlDn>(
+                        $"DeliveryNotes({group.Key})?$select=DocEntry,DocNum,DocDate,CardCode,NumAtCard,U_ESG_SupplyApproval", ct);
+                    dnCache[group.Key] = dn;
+                }
+                if (dn is null) continue;
+
+                notes.Add(new HundredFileDeliveryNote
+                {
+                    CardCode = dn.CardCode,
+                    DocNum = dn.DocNum.ToString(),
+                    DocDate = ParseSapDate(dn.DocDate),
+                    SupplyApprovalNum = Str(dn.U_ESG_SupplyApproval),
+                    NumAtCardFromPurchaseOrder = string.IsNullOrWhiteSpace(dn.NumAtCard) ? null : dn.NumAtCard,
+                    Lines = group.Select(l => new HundredFileLine
+                    {
+                        SubCatalogNum = string.IsNullOrWhiteSpace(l.SupplierCatNum) ? null : l.SupplierCatNum,
+                        ItemCode = l.ItemCode ?? "",
+                        Quantity = l.Quantity,
+                        UnitPrice = l.UnitPrice,
+                        DeliveryNoteLineNum = l.BaseLine?.ToString()
+                    }).ToList()
+                });
+            }
+
+            result.Add(new HundredFileInvoice
+            {
+                SapDocEntry = inv.DocEntry,
+                InvoiceNumber = inv.DocNum.ToString(),
+                SupplierCode = supplierCode,
+                InvoiceDate = ParseSapDate(inv.DocDate),
+                GrossDocTotal = lines.Sum(l => l.LineTotal),
+                DiscountValue = inv.TotalDiscount,
+                VatSum = inv.VatSum,
+                Currency = inv.DocCurrency ?? "",
+                DeliveryNotes = notes
+            });
         }
 
-        var page = await resp.Content.ReadFromJsonAsync<ODataPage<InvoiceDto>>(Json, ct);
-        if (page is null) return [];
-
-        return page.Value.Select(i => new InvoiceForHundredFile
-        {
-            InvoiceNumber = i.DocNum.ToString(),
-            InvoiceDate = ParseSapDate(i.DocDate),
-            CustomerCode = i.CardCode,
-            CustomerName = i.CardName ?? "",
-            NetAmount = i.DocTotal - i.VatSum,
-            VatAmount = i.VatSum,
-            TotalAmount = i.DocTotal,
-            SapDocEntry = i.DocEntry
-        }).ToList();
+        return result;
     }
 
     public async Task MarkInvoicesAsReportedAsync(IReadOnlyList<int> sapDocEntries, CancellationToken ct)
     {
         foreach (var entry in sapDocEntries)
         {
-            var body = new { U_HundredFileSent = "Y" };
-            using var resp = await _http.PatchAsJsonAsync($"Invoices({entry})", body, Json, ct);
+            var body = new Dictionary<string, string> { [ReportedField] = "Y" };
+            using var resp = await _http.PatchAsJsonAsync($"Invoices({entry})", body, WriteJson, ct);
             if (!resp.IsSuccessStatusCode)
-                _log.LogWarning("Failed to mark invoice {DocEntry} as sent: {Status}", entry, resp.StatusCode);
+            {
+                // Not marking means the invoice is re-sent next run — make that loud, not silent.
+                var detail = await resp.Content.ReadAsStringAsync(ct);
+                throw new InvalidOperationException(
+                    $"Failed to set {ReportedField} on invoice {entry} ({(int)resp.StatusCode}): {detail}");
+            }
         }
     }
+
+    private async Task<string?> ResolveSupplierCodeAsync(string cardCode, Dictionary<string, SlBp?> cache, CancellationToken ct)
+    {
+        var bp = await GetBpAsync(cardCode, cache, ct);
+        var own = Str(bp?.U_ESG_SupplierCode);
+        if (!string.IsNullOrWhiteSpace(own) || string.IsNullOrWhiteSpace(bp?.FatherCard)) return own;
+        var father = await GetBpAsync(bp!.FatherCard!, cache, ct);
+        return Str(father?.U_ESG_SupplierCode);
+    }
+
+    private async Task<SlBp?> GetBpAsync(string cardCode, Dictionary<string, SlBp?> cache, CancellationToken ct)
+    {
+        if (cache.TryGetValue(cardCode, out var hit)) return hit;
+        var bp = await GetSingleAsync<SlBp>(
+            $"BusinessPartners('{cardCode.Replace("'", "''")}')?$select=CardCode,FatherCard,U_ESG_SupplierCode", ct);
+        cache[cardCode] = bp;
+        return bp;
+    }
+
+    private async Task<T?> GetSingleAsync<T>(string url, CancellationToken ct) where T : class
+    {
+        using var resp = await _http.GetAsync(url, ct);
+        if (resp.StatusCode == System.Net.HttpStatusCode.NotFound) return null;
+        if (!resp.IsSuccessStatusCode)
+            throw new InvalidOperationException(
+                $"Service Layer GET failed ({(int)resp.StatusCode}) {url}: {await resp.Content.ReadAsStringAsync(ct)}");
+        return await resp.Content.ReadFromJsonAsync<T>(Json, ct);
+    }
+
+    /// <summary>Follows OData paging; a failed page is a fault, never a silently empty result.</summary>
+    private async Task<List<T>> GetAllPagesAsync<T>(string url, CancellationToken ct)
+    {
+        var all = new List<T>();
+        string? next = url;
+        for (var page = 0; next is not null && page < 500; page++)
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Get, next);
+            req.Headers.TryAddWithoutValidation("Prefer", "odata.maxpagesize=200");
+            using var resp = await _http.SendAsync(req, ct);
+            if (!resp.IsSuccessStatusCode)
+                throw new InvalidOperationException(
+                    $"Service Layer query failed ({(int)resp.StatusCode}) {next}: {await resp.Content.ReadAsStringAsync(ct)}");
+
+            using var doc = await JsonDocument.ParseAsync(await resp.Content.ReadAsStreamAsync(ct), cancellationToken: ct);
+            if (doc.RootElement.TryGetProperty("value", out var arr))
+                all.AddRange(arr.Deserialize<List<T>>(Json) ?? []);
+
+            next = doc.RootElement.TryGetProperty("odata.nextLink", out var a) ? a.GetString()
+                 : doc.RootElement.TryGetProperty("@odata.nextLink", out var b) ? b.GetString()
+                 : null;
+        }
+        return all;
+    }
+
+    // UDFs may be alphanumeric or numeric in SAP; accept either without failing deserialization.
+    private static string? Str(JsonElement? e) => e is null ? null : e.Value.ValueKind switch
+    {
+        JsonValueKind.Null or JsonValueKind.Undefined => null,
+        JsonValueKind.String => e.Value.GetString(),
+        _ => e.Value.GetRawText()
+    };
 
     // Service Layer returns dates as full ISO datetimes (e.g. "2026-11-27T00:00:00Z"),
     // which DateOnly.Parse rejects. Parse as DateTime first, then take the date.
@@ -188,5 +315,11 @@ public sealed class ServiceLayerSapGateway : ISapGateway
     private sealed record ODataPage<T>(IReadOnlyList<T> Value);
     private sealed record DeliveryNoteDto(int DocEntry, int DocNum, string CardCode, string? DocumentStatus);
     private sealed record DocEntryDto(int DocEntry);
-    private sealed record InvoiceDto(int DocEntry, int DocNum, string CardCode, string? CardName, string DocDate, decimal DocTotal, decimal VatSum);
+    private sealed record SlInvoice(int DocEntry, int DocNum, string DocDate, string CardCode, string? DocCurrency,
+        decimal TotalDiscount, decimal VatSum, List<SlLine>? DocumentLines);
+    private sealed record SlLine(int LineNum, string? ItemCode, decimal Quantity, decimal UnitPrice, decimal LineTotal,
+        int? BaseType, int? BaseEntry, int? BaseLine, string? SupplierCatNum);
+    private sealed record SlBp(string CardCode, string? FatherCard, JsonElement? U_ESG_SupplierCode);
+    private sealed record SlDn(int DocEntry, int DocNum, string DocDate, string CardCode, string? NumAtCard,
+        JsonElement? U_ESG_SupplyApproval);
 }

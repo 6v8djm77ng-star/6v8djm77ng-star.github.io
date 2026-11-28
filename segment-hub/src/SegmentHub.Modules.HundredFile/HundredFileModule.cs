@@ -7,14 +7,14 @@ using SegmentHub.Modules.HundredFile.Generation;
 namespace SegmentHub.Modules.HundredFile;
 
 /// <summary>
-/// Outbound module: "קובץ 100" (ממשק 7) — generates invoice confirmations from SAP and publishes to Segment.
-/// Runs daily ~16:00. Queries SAP for unreported invoices, generates the fixed-width file, publishes it.
-/// In shadow mode: generates and logs the file but does not publish or mark invoices as reported.
+/// Outbound module: "קובץ 100" (ממשק 7) — one fixed-width file per unreported invoice.
+/// Shadow mode: files go to a local comparison folder and invoices are NOT marked as reported.
+/// Live: files are published and each invoice is marked (U_ESG_100FileCreated) only after its file is written.
+/// One bad invoice is reported and skipped; it never blocks the others.
 /// </summary>
 public sealed class HundredFileModule : IOutboundModule
 {
     public const string ModuleKey = "HundredFile";
-    private const string SupplierCode = "600060078";
 
     private readonly ISapGateway _sap;
     private readonly IFilePublisher _publisher;
@@ -32,45 +32,62 @@ public sealed class HundredFileModule : IOutboundModule
 
     public async Task<ProcessingResult> GenerateOutboundAsync(bool shadowMode, CancellationToken ct)
     {
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        var runName = $"100_run_{today:yyyyMMdd}";
         try
         {
-            var today = DateOnly.FromDateTime(DateTime.Today);
-            var invoices = await _sap.GetPendingHundredFileInvoicesAsync(today.AddDays(-1), today, ct);
-
+            // Live: everything not yet reported in the last week (catches stragglers).
+            // Shadow: yesterday+today INCLUDING invoices EasySale already reported, so the output can be
+            // compared file-for-file with what EasySale actually sent.
+            var invoices = shadowMode
+                ? await _sap.GetPendingHundredFileInvoicesAsync(today.AddDays(-1), today, includeReported: true, ct)
+                : await _sap.GetPendingHundredFileInvoicesAsync(today.AddDays(-7), today, includeReported: false, ct);
             if (invoices.Count == 0)
             {
-                _log.LogInformation("No pending invoices for קובץ 100");
-                return ProcessingResult.Ok($"100_{today:yyyyMMdd}_empty.txt", "HundredFile", shadow: shadowMode);
+                _log.LogInformation("קובץ 100: no pending invoices");
+                return ProcessingResult.Ok(runName, "HundredFile", shadow: shadowMode);
             }
 
-            var seq = today.DayNumber % 10000;
-            var fileName = $"100_{today:yyyyMMdd}_{seq:D4}.txt";
-            var content = HundredFileGenerator.Generate(SupplierCode, today.AddDays(-1), today, seq, invoices);
-
-            _log.LogInformation("Generated קובץ 100: {FileName}, {Count} invoices, {Bytes} bytes",
-                fileName, invoices.Count, content.Length);
-
-            if (shadowMode)
+            var written = 0;
+            var failures = new List<string>();
+            foreach (var invoice in invoices)
             {
-                _log.LogInformation("SHADOW: would publish {FileName} with {Count} invoices", fileName, invoices.Count);
-                return ProcessingResult.Ok(fileName, "HundredFile", shadow: true);
+                ct.ThrowIfCancellationRequested();
+                var fileName = HundredFileGenerator.FileNameFor(invoice);
+                try
+                {
+                    var content = HundredFileGenerator.Generate(invoice);
+                    if (shadowMode)
+                    {
+                        await _publisher.WriteShadowCopyAsync(ModuleKey, fileName, content, ct);
+                    }
+                    else
+                    {
+                        await _publisher.PublishAsync(ModuleKey, fileName, content, ct);
+                        await _sap.MarkInvoicesAsReportedAsync([invoice.SapDocEntry], ct);
+                    }
+                    written++;
+                }
+                catch (InvalidOperationException ex)
+                {
+                    // Data that cannot be rendered faithfully (negative amount, oversize value, no base DN).
+                    _log.LogWarning("קובץ 100: invoice {Invoice} skipped: {Reason}", invoice.InvoiceNumber, ex.Message);
+                    failures.Add($"{invoice.InvoiceNumber}: {ex.Message}");
+                }
             }
 
-            await _publisher.PublishAsync(ModuleKey, fileName, content, ct);
-            var docEntries = invoices.Select(i => i.SapDocEntry).ToList();
-            await _sap.MarkInvoicesAsReportedAsync(docEntries, ct);
+            _log.LogInformation("קובץ 100: {Written}/{Total} files {Mode}, {Failed} skipped",
+                written, invoices.Count, shadowMode ? "written to shadow folder" : "published", failures.Count);
 
-            _log.LogInformation("Published {FileName} and marked {Count} invoices as reported", fileName, invoices.Count);
-            return ProcessingResult.Ok(fileName, "HundredFile", shadow: false);
+            return failures.Count == 0
+                ? ProcessingResult.Ok(runName, "HundredFile", shadow: shadowMode)
+                : ProcessingResult.Fault(runName, $"{failures.Count} invoice(s) skipped: {string.Join(" | ", failures)}", shadowMode);
         }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
+        catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
             _log.LogError(ex, "Fault generating קובץ 100");
-            return ProcessingResult.Fault($"100_{DateTime.Today:yyyyMMdd}.txt", ex.Message, shadowMode);
+            return ProcessingResult.Fault(runName, ex.Message, shadowMode);
         }
     }
 }

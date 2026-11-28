@@ -41,6 +41,12 @@ public sealed class QueueOptions
     /// <summary>Root of the EasySale-compatible folder tree while we run side by side.</summary>
     public string RootPath { get; set; } = @"C:\ES_SAP\ES_SegmentFile\ESG_SegmentFiles_API\Documents";
     public int MaxBatch { get; set; } = 50;
+
+    /// <summary>
+    /// Where shadow-mode outbound files are written for comparison. Deliberately OUTSIDE the EasySale
+    /// tree: EasySale ships WinSCP and may upload whatever sits in its export folders to Segment.
+    /// </summary>
+    public string ShadowOutputPath { get; set; } = @"C:\OIG-Monitor\segment-hub\shadow-out";
 }
 
 public sealed class InterfaceOptions
