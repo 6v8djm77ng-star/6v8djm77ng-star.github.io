@@ -4,6 +4,7 @@ using Microsoft.Extensions.Options;
 using SegmentHub.Infrastructure;
 using SegmentHub.Infrastructure.Configuration;
 using SegmentHub.Modules.DeliveryNotes;
+using SegmentHub.Modules.HomeDelivery;
 using SegmentHub.Modules.HundredFile;
 using SegmentHub.Modules.Orders;
 using SegmentHub.Modules.SupplyApprovals;
@@ -38,6 +39,8 @@ try
     });
 
     builder.Services.AddHundredFileModule();
+
+    builder.Services.AddHomeDeliveryModule();
 
     builder.Services.AddHostedService<StartupValidator>();
     builder.Services.AddHostedService<InboundPollingService>();

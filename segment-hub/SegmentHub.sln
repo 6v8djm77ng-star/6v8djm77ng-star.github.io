@@ -18,6 +18,8 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "SegmentHub.Modules.Delivery
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "SegmentHub.Modules.HundredFile", "src\SegmentHub.Modules.HundredFile\SegmentHub.Modules.HundredFile.csproj", "{B1C2D3E4-5678-9ABC-DEF0-123456789AB2}"
 EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "SegmentHub.Modules.HomeDelivery", "src\SegmentHub.Modules.HomeDelivery\SegmentHub.Modules.HomeDelivery.csproj", "{B1C2D3E4-5678-9ABC-DEF0-123456789AB3}"
+EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "SegmentHub.Tests", "tests\SegmentHub.Tests\SegmentHub.Tests.csproj", "{D5BFB11D-5DB6-4E01-B585-381ADF1D39C3}"
 EndProject
 Global
@@ -26,6 +28,10 @@ Global
 		Release|Any CPU = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{B1C2D3E4-5678-9ABC-DEF0-123456789AB3}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B1C2D3E4-5678-9ABC-DEF0-123456789AB3}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B1C2D3E4-5678-9ABC-DEF0-123456789AB3}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B1C2D3E4-5678-9ABC-DEF0-123456789AB3}.Release|Any CPU.Build.0 = Release|Any CPU
 		{1E1E3562-6133-46C6-95D4-A8FA58DC98CA}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{1E1E3562-6133-46C6-95D4-A8FA58DC98CA}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{1E1E3562-6133-46C6-95D4-A8FA58DC98CA}.Release|Any CPU.ActiveCfg = Release|Any CPU

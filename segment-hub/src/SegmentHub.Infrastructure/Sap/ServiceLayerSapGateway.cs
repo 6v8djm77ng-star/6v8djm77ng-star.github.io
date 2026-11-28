@@ -68,14 +68,24 @@ public sealed class ServiceLayerSapGateway : ISapGateway
 
     public async Task<int> CreateInvoiceFromDeliveryNoteAsync(InvoiceDraft draft, CancellationToken ct)
     {
-        // A/R invoice drawn from a delivery note: one DocumentLine with BaseType 15 (ODLN), BaseEntry = DN DocEntry.
+        // Copy every OPEN line of the DN (BaseType 15 = ODLN). Posting only BaseLine 0 would leave the
+        // other lines open and un-billed; posting closed lines would fail or double-bill.
+        var dn = await GetSingleAsync<SlDnLines>(
+            $"DeliveryNotes({draft.BaseDeliveryNoteDocEntry})?$select=DocEntry,DocumentStatus,DocumentLines", ct)
+            ?? throw new InvalidOperationException($"Delivery note {draft.BaseDeliveryNoteDocEntry} not found.");
+
+        var openLines = (dn.DocumentLines ?? [])
+            .Where(l => string.Equals(l.LineStatus, "bost_Open", StringComparison.OrdinalIgnoreCase))
+            .Select(l => new { BaseType = 15, BaseEntry = draft.BaseDeliveryNoteDocEntry, BaseLine = l.LineNum })
+            .ToArray();
+        if (openLines.Length == 0)
+            throw new InvalidOperationException($"Delivery note {draft.BaseDeliveryNoteDocEntry} has no open lines — already invoiced.");
+
         var body = new
         {
             CardCode = draft.CardCode,
-            DocumentLines = new[]
-            {
-                new { BaseType = 15, BaseEntry = draft.BaseDeliveryNoteDocEntry, BaseLine = 0 }
-            }
+            DocDate = draft.DocDate?.ToString("yyyy-MM-dd"),
+            DocumentLines = openLines
         };
 
         using var resp = await _http.PostAsJsonAsync("Invoices", body, WriteJson, ct);
@@ -322,6 +332,9 @@ public sealed class ServiceLayerSapGateway : ISapGateway
     private sealed record SlLine(int LineNum, string? ItemCode, decimal Quantity, decimal UnitPrice, decimal LineTotal,
         int? BaseType, int? BaseEntry, int? BaseLine, string? SupplierCatNum);
     private sealed record SlBp(string CardCode, string? FatherCard, JsonElement? U_ESG_SupplierCode);
+    private sealed record SlDnLines(int DocEntry, string? DocumentStatus, List<SlDnLine>? DocumentLines);
+    private sealed record SlDnLine(int LineNum, string? LineStatus);
+
     private sealed record SlDn(int DocEntry, int DocNum, string DocDate, string CardCode, string? NumAtCard,
         JsonElement? U_ESG_SupplyApproval);
 }

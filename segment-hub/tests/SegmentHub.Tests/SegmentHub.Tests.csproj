@@ -7,6 +7,7 @@
     <ProjectReference Include="..\..\src\SegmentHub.Modules.Orders\SegmentHub.Modules.Orders.csproj" />
     <ProjectReference Include="..\..\src\SegmentHub.Modules.DeliveryNotes\SegmentHub.Modules.DeliveryNotes.csproj" />
     <ProjectReference Include="..\..\src\SegmentHub.Modules.HundredFile\SegmentHub.Modules.HundredFile.csproj" />
+    <ProjectReference Include="..\..\src\SegmentHub.Modules.HomeDelivery\SegmentHub.Modules.HomeDelivery.csproj" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />

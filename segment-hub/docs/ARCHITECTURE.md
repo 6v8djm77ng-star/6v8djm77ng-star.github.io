@@ -70,3 +70,30 @@ decode → parse → validate(SAP) → map → post(SAP)
 3. התקנת תהליך שמעתיק קבצים נכנסים ל‑`_HubInbox`.
 4. מיגרציית טבלת `HubProcessingLog` + משתמש SAP ייעודי (SEGHUB) במקום לוגין אישי.
 5. בנייה מחדש של DeliveryNotes כמודול ייצוא, אם ממשק 9 בתחום.
+
+## Home-delivery invoicing (בית לקוח, Cheetah) — `SegmentHub.Modules.HomeDelivery`
+
+Outbound module `HomeDeliveryInvoicing`, runs daily at 19:00 (after Chita-POD-to-SAP at 18:00).
+Reuses existing signals; no direct Cheetah API:
+
+| signal | source |
+|---|---|
+| delivered + receipt date | `chita-receipt-dates.json` (Cheetah Daily job), keyed by source sales-order DocNum |
+| signed POD | SAP attachment on the DN whose file name contains "חתימה" |
+| not yet invoiced | DLN1 open lines > 0 |
+| no double-billing | source order not invoiced directly (INV1 BaseType 17) |
+
+Rules (`HomeDeliveryEligibility`, pure, every doubt blocks): not in the Cheetah map → branch delivery
+(supply-approval flow) · consignment → skip · no open lines → skip · order invoiced directly → skip ·
+unsigned → wait, alert after `UnsignedAlertDays` · else invoice all open DN lines, dated on the receipt
+date (never before the DN date).
+
+Shadow: CSV decision report in `shadow-out\HomeDeliveryInvoicing\<date>\` — nothing is created in SAP.
+Faults: missing/unreadable receipt file (never treated as "no deliveries"), file older than
+`StaleDatesHours`, unsigned too long, failed invoice post (per DN, does not block others).
+
+Deploy settings (env vars, not committed): `Hub__HomeDelivery__ChitaDatesPath`,
+`ConnectionStrings__SapRead` (SQL read login, read-only).
+
+Before going live: confirm the OIG auto-invoice app (currently disabled) and `oig-electra-worker`
+do not invoice the same Segment DNs.

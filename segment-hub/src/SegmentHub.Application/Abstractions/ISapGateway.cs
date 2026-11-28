@@ -19,7 +19,10 @@ public interface ISapGateway
     /// <summary>True if an item code exists and is active in SAP (prevents "פריט לא קיים" faults).</summary>
     Task<bool> ItemExistsAsync(string itemCode, CancellationToken ct);
 
-    /// <summary>Create an A/R invoice based on an existing delivery note (TargetType 13). Returns the new DocEntry.</summary>
+    /// <summary>
+    /// Create an A/R invoice from ALL open lines of an existing delivery note. Returns the new DocEntry.
+    /// Throws when the DN has no open line (already invoiced) — never posts a partial or empty invoice.
+    /// </summary>
     Task<int> CreateInvoiceFromDeliveryNoteAsync(InvoiceDraft draft, CancellationToken ct);
 
     /// <summary>True if a sales order with this Electra reference already exists (duplicate guard).</summary>
@@ -46,8 +49,12 @@ public interface ISapGateway
 /// <summary>Lightweight handle to a delivery note found in SAP.</summary>
 public sealed record DeliveryNoteHandle(int DocEntry, int DocNum, string CardCode, bool IsOpen);
 
-/// <summary>What we intend to post. Built by a mapper, validated before it reaches the gateway.</summary>
-public sealed record InvoiceDraft(int BaseDeliveryNoteDocEntry, string CardCode, string SourceFileName, decimal ExpectedTotal);
+/// <summary>
+/// What we intend to post. Built by a mapper, validated before it reaches the gateway.
+/// <paramref name="DocDate"/> null = SAP default (today); home deliveries use the Cheetah receipt date.
+/// </summary>
+public sealed record InvoiceDraft(
+    int BaseDeliveryNoteDocEntry, string CardCode, string SourceFileName, decimal ExpectedTotal, DateOnly? DocDate = null);
 
 /// <summary>Sales order draft ready to post to SAP.</summary>
 public sealed record SalesOrderDraft

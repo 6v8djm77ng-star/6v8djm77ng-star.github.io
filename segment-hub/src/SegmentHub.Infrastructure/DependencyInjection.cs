@@ -9,6 +9,7 @@ using SegmentHub.Application.Abstractions;
 using SegmentHub.Infrastructure.Alerting;
 using SegmentHub.Infrastructure.Configuration;
 using SegmentHub.Infrastructure.Files;
+using SegmentHub.Infrastructure.HomeDelivery;
 using SegmentHub.Infrastructure.Persistence;
 using SegmentHub.Infrastructure.Sap;
 
@@ -35,6 +36,16 @@ public static class DependencyInjection
                 config.GetConnectionString("SapCompany")
                     ?? throw new InvalidOperationException("Missing ConnectionStrings:SapCompany"),
                 sp.GetRequiredService<ILogger<SqlProcessingAuditStore>>()));
+
+        // Home-delivery invoicing: read-only SQL view + the Cheetah receipt-dates file.
+        // "SapRead" lets the read model use a SQL read login where integrated auth is not available.
+        services.AddOptions<HomeDeliverySettings>().Bind(config.GetSection(HomeDeliverySettings.SectionName));
+        services.AddSingleton(sp => sp.GetRequiredService<IOptions<HomeDeliverySettings>>().Value);
+        services.AddSingleton<IChitaReceiptDatesSource, ChitaReceiptDatesFile>();
+        services.AddSingleton<IHomeDeliveryReadModel>(_ => new SqlHomeDeliveryReadModel(
+            config.GetConnectionString("SapRead") ?? config.GetConnectionString("SapCompany")
+                ?? throw new InvalidOperationException("Missing ConnectionStrings:SapRead / SapCompany")));
+        services.AddSingleton(TimeProvider.System);
 
         // Teams webhook URL is read from config/secret; empty => alert sink no-ops.
         services.AddHttpClient("teams");

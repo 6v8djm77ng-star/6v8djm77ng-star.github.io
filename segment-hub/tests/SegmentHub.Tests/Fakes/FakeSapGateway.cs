@@ -21,8 +21,15 @@ public sealed class FakeSapGateway : ISapGateway
     public Task<bool> ItemExistsAsync(string itemCode, CancellationToken ct)
         => Task.FromResult(NextItemExists);
 
+    public List<InvoiceDraft> CreatedInvoices { get; } = [];
+    public Func<InvoiceDraft, Exception?>? FailInvoice { get; set; }
+
     public Task<int> CreateInvoiceFromDeliveryNoteAsync(InvoiceDraft draft, CancellationToken ct)
-        => Task.FromResult(NextDocEntry);
+    {
+        if (FailInvoice?.Invoke(draft) is { } ex) throw ex;
+        CreatedInvoices.Add(draft);
+        return Task.FromResult(NextDocEntry);
+    }
 
     public Task<bool> SalesOrderExistsAsync(string electraOrderRef, string fatherCard, CancellationToken ct)
         => Task.FromResult(NextOrderExists);
